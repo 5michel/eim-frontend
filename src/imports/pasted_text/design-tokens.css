@@ -1,0 +1,626 @@
+Build a complete, production-quality interactive web prototype for **EIM —
+Efficient Issues Manager**, an IT incident management application, using
+React and Tailwind CSS. Cover exactly the roles and processes defined below
+— do not invent screens, roles, or features beyond this scope.
+
+> ⚠️ READ FIRST — SCOPE DISCIPLINE
+> This is a frontend prototype for a real, already-specified backend
+> (Laravel 13 / MySQL 8). Every screen below maps to an actual entity or use
+> case. Do **not** add: an email/notification system, a "Rapports"/analytics
+> module, third-party integrations, an escalation engine, or working-hours
+> SLA logic. These are explicitly out of scope for the current version — see
+> "OUT OF SCOPE" at the end of this document.
+
+════════════════════════════════════════
+DESIGN SYSTEM — "MERIDIAN" TOKENS (apply globally)
+════════════════════════════════════════
+
+> ⚠️ This app already has an established visual identity named **Meridian**:
+> a desaturated operational-console aesthetic, IBM Plex Sans/Mono
+> typography, a single cobalt tone reserved for actions, status signalled
+> in brick red / amber / sage, and a 3px colored severity rail on incident
+> cards. The token values below are a best-effort reconstruction of that
+> system — if you have the original Meridian CSS files, paste their exact
+> values in place of these before running the prompt.
+
+Typography:
+font-family (UI text): 'IBM Plex Sans', system-ui, sans-serif
+font-family (IDs, timestamps, code, SLA countdowns): 'IBM Plex Mono', monospace
+--text-xs:   11px / line-height 1.5
+--text-sm:   13px / line-height 1.5
+--text-base: 14px / line-height 1.6
+--text-md:   16px / line-height 1.5
+--text-lg:   18px / line-height 1.4
+--text-xl:   22px / line-height 1.3
+--text-2xl:  28px / line-height 1.2
+Font weights: 400, 500, 600, 700
+
+CSS Variables:
+--color-cobalt-50:   #EEF3FB   (the ONLY action color in the app — buttons,
+--color-cobalt-100:  #D7E3F5    links, focus rings, active nav item, "En cours"
+--color-cobalt-500:  #3D5F8A    status. Do not introduce a second "info" blue.)
+--color-cobalt-600:  #2E4A6E
+--color-cobalt-700:  #23374F
+
+--color-neutral-0:   #FFFFFF
+--color-neutral-50:  #F7F7F5
+--color-neutral-100: #EFEFEC
+--color-neutral-200: #E2E1DC
+--color-neutral-300: #CFCEC7
+--color-neutral-400: #ADABA1
+--color-neutral-500: #86847A
+--color-neutral-600: #605F57
+--color-neutral-700: #45443E
+--color-neutral-800: #2E2D29
+--color-neutral-900: #1C1B18
+
+--color-brick-50:  #FBEEEC     (critical / danger — P1, SLA overdue)
+--color-brick-500: #A8402F
+--color-brick-700: #7A2E22
+
+--color-amber-50:  #FBF3E6     (warning — En attente, P2, SLA imminent)
+--color-amber-500: #B8842E
+--color-amber-700: #8A6221
+
+--color-sage-50:   #EEF3EA     (success — Résolu, SLA respecté)
+--color-sage-500:  #5C7A4C
+--color-sage-700:  #435A37
+
+--color-bg:          #F7F7F5
+--color-surface:     #FFFFFF
+--color-border:      #E2E1DC
+--color-text-primary: #1C1B18
+--color-text-secondary: #605F57
+--color-text-disabled: #ADABA1
+
+Spacing scale (8px base): 2, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80px
+Border radius: --radius-sm: 4px (inputs, badges) · --radius-md: 6px (cards, buttons)
+· --radius-lg: 10px (modals, drawers)
+Shadows: --shadow-sm: 0 1px 2px rgba(0,0,0,0.06) · --shadow-md: 0 4px 12px rgba(0,0,0,0.08)
+(no shadow heavier than shadow-md anywhere — flat, desaturated, no gradients)
+
+Severity rail: every incident row/card gets a 3px left border colored by
+priority — brick-500 (P1), amber-500 (P2), cobalt-500 (P3), neutral-300 (P4).
+This is a signature Meridian element — do not omit it.
+
+═══════════════════════════════
+COMPONENT LIBRARY
+═══════════════════════════════
+
+BUTTONS:
+- Primary: bg cobalt-600, white text, hover cobalt-700, focus ring cobalt-100
+- Secondary: bg neutral-100, neutral-800 text, hover neutral-200
+- Outline: border neutral-300, transparent bg, hover neutral-50
+- Ghost: no border/bg, hover neutral-100
+- Danger: bg brick-500, white, hover brick-700 — reserved for destructive
+  actions (deactivate account, delete attachment), always behind a
+  confirmation step (see FORMS & CONFIRMATIONS below)
+- All: loading spinner state, disabled (opacity-40), 36px height default
+
+BADGES (status — StatutIncident):
+- Nouveau: neutral-100 bg, neutral-700 text
+- En cours: cobalt-100 bg, cobalt-700 text
+- En attente: amber-50 bg, amber-700 text
+- Résolu: sage-50 bg, sage-700 text
+- Clôturé: neutral-100 bg, neutral-500 text (muted, terminal state)
+
+BADGES (priority — Priorite, derived from Impact × Urgence, see matrix below):
+- P1 Critique: brick-500 bg, white text, bold
+- P2 Haute: amber-500 bg, white text
+- P3 Normale: cobalt-100 bg, cobalt-700 text
+- P4 Faible: neutral-100 bg, neutral-600 text
+
+INPUTS: height 36px, border neutral-300, radius-sm, focus border cobalt-500 +
+ring 3px cobalt-100, error border brick-500 + helper text brick-700, label
+text-sm font-medium neutral-700, placeholder neutral-400
+
+CARDS: bg surface, border neutral-200, radius-md, shadow-sm, padding 20px,
+hover shadow-md transition, severity rail where applicable (see above)
+
+KPI CARD: label text-xs uppercase tracking-wide neutral-500, value text-2xl
+font-bold (IBM Plex Mono) neutral-900, delta badge small sage or brick
+
+TABLE: header bg neutral-50, text-xs uppercase font-semibold neutral-500,
+row border-b neutral-100, hover bg neutral-50, selected bg cobalt-50,
+checkbox column 40px, actions column on hover
+
+SIDEBAR: width 240px, bg neutral-900, text neutral-300, active item bg
+cobalt-600/15 text cobalt-100 font-medium, hover bg neutral-800, icons 18px
+Lucide strokeWidth 1.5, section labels text-xs uppercase neutral-500,
+collapsed width 60px (icons only)
+
+TOP NAV: height 56px, bg surface, border-b neutral-200, breadcrumb left
+(always show current section > sub-section, e.g. "Incidents > INC-001"),
+actions right (search, avatar — **no notification bell**, see OUT OF SCOPE)
+
+FORMS & CONFIRMATIONS: any action that is destructive or hard-to-reverse
+(deactivate a user, remove an attachment, bulk changes) opens a small
+confirmation modal stating the consequence in plain language before
+executing. Reversible/safe toggles (e.g. reactivating a user) execute
+directly without confirmation.
+
+═══════════════════════════════
+ROLES (exactly 3 — do not add "Technicien" or any other role)
+═══════════════════════════════
+
+- **Demandeur** (client) — reports incidents, tracks them, validates or
+  reopens resolutions
+- **Agent** — works incidents assigned to their team, comments, resolves,
+  writes knowledge base articles
+- **Administrateur** — everything an Agent can do, plus manages users,
+  teams, categories, SLA rules, and assets
+
+There is no "Technicien" role and no distinct "Système" login — automated
+actions (priority calculation, SLA due-date calculation, history logging,
+auto-closure after 72h) are shown as authored by "Système" inside history
+timelines only, never as a login role.
+
+═══════════════════════════════
+MOCK DATA
+═══════════════════════════════
+
+Users:
+- Admin: Sophie Martin (s.martin@eim.tg) — Administrateur
+- Agent: Kofi Mensah (k.mensah@eim.tg) — Agent, équipe **Support N1**
+- Agent: Ama Sarpong (a.sarpong@eim.tg) — Agent, équipe **Infrastructure**
+- Demandeur: Jean Dupont (j.dupont@client.tg) — Demandeur
+
+Équipes: Support N1 (routage par défaut : Logiciel, Accès) ·
+Infrastructure (routage par défaut : Réseau, Matériel)
+
+Catégories: Réseau · Matériel · Logiciel · Accès · Autre (admin-configurable
+list, these are just seed examples)
+
+Matrice de priorité (Impact × Urgence → Priorité, exact rule, apply
+consistently everywhere priority is computed or displayed):
+
+| Impact \ Urgence | Faible | Moyenne | Élevée |
+|---|---|---|---|
+| **Faible** | P4 | P3 | P2 |
+| **Moyen**  | P3 | P2 | P1 |
+| **Élevé**  | P2 | P1 | P1 |
+
+SLA (exemple de configuration, éditable par l'admin — voir Screen 7):
+
+| Priorité | Délai de prise en charge | Délai de résolution |
+|---|---|---|
+| P1 Critique | 30 min | 4h |
+| P2 Haute | 1h | 8h |
+| P3 Normale | 4h | 24h |
+| P4 Faible | 8h | 72h |
+
+(No "escalade automatique" column/behaviour — that mechanism does not
+exist in the current backend. Do not display it as if it were live.)
+
+Actifs (Assets, 6 records): PC-Michel-001 (Poste de travail), Serveur-MAIL-01
+(Serveur), Serveur-ERP-01 (Serveur), Imprimante-RDC-01 (Imprimante),
+Switch-Reseau-B2 (Réseau), PC-Accueil-01 (Poste de travail) — each has an
+optional "utilisateur affecté".
+
+Incidents (12 records — statuts/priorités unchanged from prior draft, keep
+as-is, all values must remain within the enums above):
+INC-001: "Serveur de messagerie inaccessible" P1 En cours, Kofi, lié à
+  Serveur-MAIL-01, 2h restant
+INC-002: "Imprimante réseau RDC en panne" P3 Nouveau, non assigné, lié à
+  Imprimante-RDC-01
+INC-003: "VPN bloqué pour 3 utilisateurs" P2 En attente, Ama, 5h restant
+INC-004: "PC direction ne démarre plus" P2 En cours, Kofi, 1h restant (SLA
+  imminent)
+INC-005: "Accès ERP refusé direction commerciale" P1 En cours, Ama, lié à
+  Serveur-ERP-01, SLA dépassé
+INC-006: "Mise à jour Windows échouée poste 14" P4 Résolu, Kofi
+INC-007: "Câble réseau salle réunion B coupé" P3 Résolu, Ama, lié à
+  Switch-Reseau-B2
+INC-008: "Badge accès serveur refusé" P2 En cours, Kofi, 3h restant
+INC-009: "Lenteur application comptabilité" P3 En attente, non assigné
+INC-010: "Écran noir poste accueil" P3 En cours, Ama, lié à PC-Accueil-01,
+  8h restant
+INC-011: "Sauvegarde nocturne échouée" P1 Nouveau, non assigné
+INC-012: "Téléphone IP bureau DG muet" P2 Résolu, Kofi
+
+Jean Dupont (Demandeur) is the creator of INC-001, INC-003, INC-009.
+
+Articles de connaissance (5 records, ArticleConnaissance):
+- "Réinitialiser son mot de passe VPN" — Réseau — publié — auteur Ama Sarpong
+- "Procédure de redémarrage du service SMTP" — Réseau — publié — auteur Kofi Mensah
+- "Configurer l'accès à l'ERP" — Accès — publié — auteur Ama Sarpong
+- "Résoudre une lenteur applicative courante" — Logiciel — publié — auteur Kofi Mensah
+- "Procédure d'installation d'une imprimante réseau" — Matériel — brouillon
+  (non publié, visible uniquement par les agents) — auteur Kofi Mensah
+
+═══════════════════════════════════════════════
+SCREENS & FLOWS — ALL ROLES
+═══════════════════════════════════════════════
+
+Implement a full React SPA with React Router. Navigation between all
+screens must work. Every flow below must be completable end-to-end with
+mock data (instant, no real backend calls).
+
+─────────────────────────────────
+SCREEN 1: LOGIN
+─────────────────────────────────
+Layout: centered card 400px, logo top ("EIM" cobalt-600 font-bold 24px,
+IBM Plex Mono, + subtitle "Efficient Issues Manager — Gestion des
+incidents IT"), white card shadow-md radius-lg padding 40px.
+
+Fields: Email, Password (show/hide toggle), "Se souvenir de moi" checkbox,
+"Mot de passe oublié ?" link.
+Button: Primary full-width "Se connecter" with loading state.
+
+Demo role switcher (clearly labelled "Démonstration uniquement — n'existe
+pas dans l'application réelle", small text below the form): segmented
+control with exactly 3 options — Demandeur / Agent / Administrateur.
+Selecting one pre-fills the matching mock account and routes to the
+correct dashboard on login.
+
+FORGOT PASSWORD: separate screen, email input, "Envoyer le lien" button,
+success confirmation message (no illustration).
+
+─────────────────────────────────────────────────
+SCREEN 2A: DASHBOARD — ADMIN / AGENT VIEW
+─────────────────────────────────────────────────
+Layout: sidebar (240px) + main content.
+
+Sidebar items:
+- Tableau de bord (home) [active]
+- Incidents (alert-circle)
+- Base de connaissances (book-open)
+- Actifs (server)
+- Utilisateurs (users) [admin only]
+- Équipes (users-round) [admin only]
+- Paramètres (settings) [admin only]
+Divider
+- Aide (help-circle) → static link to user documentation (per project
+  requirement that documentation exists for all 3 profiles — this page can
+  just be a simple static content block, not an interactive feature)
+Bottom: avatar + name + role + logout icon
+
+Main content:
+Top: "Bonjour, {prénom}" h2 + date subtitle
+
+KPI row (4 cards):
+1. Incidents ouverts (Nouveau + En cours + En attente): count
+2. Incidents critiques P1: count, brick badge if any SLA overdue among them
+3. Temps moyen de résolution (mock aggregate, e.g. "4h 22min")
+4. Taux SLA respecté (mock aggregate %, e.g. "78%")
+
+SLA warning banner (purely a computed display of dateEcheanceSLA vs now —
+NOT a notification/push feature): shown only if at least one assigned-to-me
+(agent) or any (admin) incident is past its SLA. amber-50 bg (brick-50 if
+overdue), icon, "INC-005 — Accès ERP : SLA dépassé depuis 23min." + [Voir
+l'incident] button.
+
+Incident table below (agent: incidents assigned to their team; admin: all):
+Columns: # | Titre | Priorité | Statut | Assigné | Créé | SLA | Actions
+Each row has the 3px severity rail.
+Search bar + filter pills (Tous / Ouverts / Critiques / En attente)
+Sortable columns, checkbox selection + bulk action bar on selection.
+  Bulk actions allowed: Réassigner à un agent · Changer de catégorie ·
+  Exporter (CSV). **Do NOT offer a bulk "Résoudre" or "Clôturer" action** —
+  resolving an incident always requires an individual, mandatory solution
+  description (business rule), so it cannot be batched.
+SLA column: thin 4px progress bar, sage (>50% remaining) → amber (20–50%)
+→ brick (<20% or overdue).
+Actions: eye icon (view) + more-horizontal (dropdown).
+Pagination: "Affichage 1–10 de 12" + prev/next + page size selector.
+
+─────────────────────────────────────────────
+SCREEN 2B: DASHBOARD — DEMANDEUR VIEW
+─────────────────────────────────────────────
+Simpler layout: no sidebar, top nav only (logo left, "Mes incidents",
+"Base de connaissances", "Aide", avatar right).
+
+Content:
+Welcome card: "Bonjour {prénom}, comment pouvons-nous vous aider ?"
+Primary CTA: "+ Créer un incident"
+
+My incidents table (filtered to the user's own incidents — INC-001,
+INC-003, INC-009 for Jean Dupont):
+Columns: # | Titre | Statut | Priorité | Créé le | Dernière mise à jour
+No SLA column, no agent column (demandeurs don't see internal routing
+details). Click row → incident detail (demandeur view).
+
+Knowledge base suggestions: "Articles récents" — 3 cards (title + category
+tag + arrow link) from the published articles list.
+
+─────────────────────────────────────
+SCREEN 3: INCIDENT LIST (full page)
+─────────────────────────────────────
+Header: "Incidents" h1 + count badge + "[+ Créer un incident]" (demandeur)
+or role-appropriate create button (agent/admin can also open on behalf of
+a demandeur — optional, keep simple: same form, with a demandeur picker
+field added at the top when role ≠ demandeur).
+
+Advanced filters (collapsible): Statut (multi-select) | Priorité | Assigné
+à | Catégorie | Date de création (range) | SLA (respecté / dépassé /
+imminent). Active filters shown as removable pill tags.
+
+Table with all 12 incidents (scoped by role as in 2A/2B). Density toggle
+(Compact/Normal/Comfortable). Column visibility toggle. Export (CSV).
+
+Empty state (filters return 0 results): centered, icon + "Aucun incident
+trouvé" + "Réinitialiser les filtres" button. Apply the same empty-state
+pattern (icon + message + reset/create action) to every other list screen
+in this prototype (Utilisateurs, Équipes, Actifs, Base de connaissances) —
+don't leave them without one.
+
+─────────────────────────────────────────────
+SCREEN 4: CRÉER UN INCIDENT (UC-01)
+─────────────────────────────────────────────
+Two-column layout: form left (65%), help panel right (35%).
+
+Section 1 — Identification:
+- Titre* (input)
+- Catégorie* (select, from the admin-configured list)
+- Description* (textarea 6 rows, character count)
+
+Section 2 — Qualification:
+- Impact* (radio: Faible "1 utilisateur affecté" / Moyen "Équipe ou service
+  affecté" / Élevé "Toute l'organisation affectée")
+- Urgence* (radio: Faible / Moyenne / Élevée)
+- Priorité calculée (read-only badge, updates live from the matrix above —
+  show the matching cell, e.g. "Impact Élevé × Urgence Élevée = P1
+  Critique")
+
+Section 3 — Contexte:
+- Équipement concerné (combobox linked to Actifs, optional)
+- Pièces jointes (dropzone, drag & drop or click, file chips with name +
+  size + remove button, max 20MB, accepts jpg/png/pdf/docx)
+- Informations complémentaires (optional textarea)
+
+Right help panel (sticky, this is UC-01's optional "consulter la base de
+connaissances" branch — SA1):
+"Comment bien décrire votre incident ?" accordion, 3 tips
+"Articles suggérés" — 2–3 published KB articles matching the selected
+category, updates live on category change, each clickable to the article
+detail (does not block/replace submitting the form)
+Priority matrix, 3×3, visual, matching the table above
+
+Footer: [Annuler] outline + [Créer l'incident] primary.
+Client-side validation on required fields blocks submit with inline error
+helper text (mirrors backend's SE1 "données invalides").
+On submit: loading → success toast "Incident INC-013 créé avec succès" +
+"Voir l'incident" link → redirect to incident detail.
+
+─────────────────────────────────────────────────
+SCREEN 5: DÉTAIL D'UN INCIDENT
+─────────────────────────────────────────────────
+Three-column-equivalent layout: left (60%) main content, right (40%)
+properties sidebar. **Content and available actions depend on the viewing
+role — build both variants.**
+
+HEADER (all roles):
+"INC-001" (IBM Plex Mono) text-xs neutral-500 + copy icon
+Title h1 text-xl font-semibold
+Badge row: [P1 Critique] [En cours] [Réseau]
+"Signalé par Jean Dupont • il y a 2h • assigné à Kofi Mensah"
+
+ACTION BAR (role-dependent — this is the part most often gotten wrong,
+follow it exactly):
+
+Agent/Admin, incident status = Nouveau or En cours:
+[Changer le statut ▾] → En attente / Résolu
+[Assigner ▾] or [Réassigner ▾] (UC-03): choosing an agent, when the
+  incident is currently Nouveau, transitions it to En cours and computes
+  the SLA due date from the priority table — show this explicitly in the
+  confirmation ("L'incident passera à 'En cours' et l'échéance SLA sera
+  calculée : 14:32"). If no agent is available in the routed team, disable
+  the confirm button with helper text "Aucun agent disponible dans
+  l'équipe {nom}".
+[Ajouter une note interne]
+
+Status change modals:
+- "En attente": textarea required "Motif de mise en attente"
+- "Résolu": textarea required "Description de la solution" (cannot submit
+  empty — mirrors the mandatory-comment-at-resolution rule) — this field,
+  once saved, is displayed read-only afterwards, never editable again
+
+Demandeur, incident status = Résolu (UC-04 — this whole block was missing
+before, it is required):
+Banner: "Cet incident a été marqué comme résolu. La solution proposée
+est-elle satisfaisante ?"
+[Valider la résolution] primary → confirmation modal → on confirm, status
+  → Clôturé, banner replaced by "Incident clôturé le {date}"
+[Rouvrir l'incident] outline/danger → modal with **required** textarea
+  "Décrivez pourquoi le problème persiste" (cannot submit empty) → on
+  confirm, status → En cours, comment published, banner disappears
+
+Demandeur, incident status = Clôturé automatiquement without prior action
+(edge case, UC-04 SE1): if the mock incident has been Résolu long enough,
+show instead: "Cet incident a été clôturé automatiquement." with no
+action buttons.
+
+Tabs: [Description] [Commentaires (3)] [Pièces jointes (2)] [Historique]
+
+Description tab: full description text, "Équipement : {actif}" (if any),
+"Signalé par : {demandeur} (Demandeur)"
+
+Commentaires tab: chronological thread (avatar + name + role badge + time
++ message). Internal notes tagged [🔒 Note interne — visible agents
+uniquement] and hidden entirely from the demandeur view (not just greyed
+out — actually absent from what a demandeur sees). New comment input:
+textarea + "Note interne" checkbox (agent/admin only, hidden for
+demandeur) + [Envoyer].
+
+Pièces jointes tab: file cards (icon, filename, size, uploaded by, date,
+download button).
+
+Historique tab: vertical timeline of every StatusHistory entry, e.g.
+- (J-2h) Jean Dupont a créé l'incident
+- (J-1h45) Système : priorité calculée P1, routage vers équipe Infrastructure
+- (J-1h30) Kofi Mensah assigné — statut → En cours
+Each entry: colored dot + avatar (or "Système" icon for automated entries)
++ action text + timestamp. This is the single source of truth for the
+incident's activity — **do not duplicate it as a second "recent activity"
+widget in the sidebar** (see below).
+
+RIGHT SIDEBAR:
+"Propriétés": Statut [badge], Priorité [badge] (impact/urgence shown),
+Catégorie, Assigné à [avatar], Équipe.
+"SLA": priorité → délai de résolution, échéance (date/heure), progress
+bar (sage/amber/brick as defined above), "SLA imminent" or "SLA dépassé"
+text label when relevant.
+"Actif lié" (if any): icon + nom + type + numéro de série.
+(No separate "Activité" mini-feed here — the Historique tab already
+covers it, keeping one source of truth avoids duplicated/conflicting
+information.)
+
+─────────────────────────────────────────────
+SCREEN 6: GESTION DES UTILISATEURS (Admin only)
+─────────────────────────────────────────────
+Header: "Utilisateurs" h1 + count + "[+ Inviter un utilisateur]"
+
+Table columns: Avatar+Nom | Email | Rôle (badge: Admin cobalt / Agent sage
+/ Demandeur neutral — **only these 3**) | Équipe (agents/admin only) |
+Statut (Actif/Inactif) | Incidents assignés | Dernier accès | Actions
+
+"[+ Inviter]" → right drawer (400px): Prénom, Nom, Email, Rôle (select),
+Équipe (select, shown only if Rôle ≠ Demandeur) → [Annuler] [Envoyer
+l'invitation] → success toast + row added with "Invitation envoyée"
+status.
+
+Edit icon → same drawer pre-filled + "Désactiver le compte" danger button
+at the bottom, which opens a confirmation modal ("Ce compte ne pourra
+plus se connecter. Son historique et ses incidents restent conservés.")
+before applying — mirrors the CDC rule that accounts are deactivated, not
+deleted, and preserves traceability. Reactivating an inactive account is a
+direct toggle, no confirmation needed.
+
+─────────────────────────────────────────────
+SCREEN 6B: GESTION DES ÉQUIPES (Admin only) — simplified CRUD
+─────────────────────────────────────────────
+Header: "Équipes" h1 + "[+ Créer une équipe]"
+Table: Nom | Description | Membres (count + avatars) | Catégories routées
+  par défaut | Actions (edit)
+Create/edit → drawer: Nom, Description, Membres (multi-select of agents).
+Keep this screen lightweight — it's a standard CRUD, not a detailed flow.
+
+─────────────────────────────────────────────
+SCREEN 6C: GESTION DES ACTIFS (Admin only) — simplified CRUD
+─────────────────────────────────────────────
+Header: "Actifs" h1 + "[+ Ajouter un actif]"
+Table: Nom | Type | Numéro de série | Utilisateur affecté | Incidents liés
+  (count) | Actions (edit)
+Create/edit → drawer: Nom, Type (select: Poste de travail / Serveur /
+Imprimante / Réseau / Autre), Numéro de série, Utilisateur affecté
+  (optional combobox).
+
+─────────────────────────────────────────────
+SCREEN 6D: BASE DE CONNAISSANCES
+─────────────────────────────────────────────
+List view (all roles): "Base de connaissances" h1, search bar, category
+filter pills. Cards: title, category tag, excerpt, author, publish date.
+Demandeurs and unauthenticated-equivalent views only ever see **published**
+articles. Agents/Admin additionally see a "Brouillons" filter pill and a
+draft-status badge on unpublished articles, plus "[+ Rédiger un article]".
+
+Article detail: title, category, author, publish date, full content
+(rendered as simple rich text), "Articles liés" (2–3 same-category cards).
+
+Create/edit article (Agent/Admin): Titre, Catégorie (select), Contenu
+(rich text or plain textarea), [Enregistrer comme brouillon] outline +
+[Publier] primary.
+
+─────────────────────────────────────────────
+SCREEN 7: PARAMÈTRES (Admin)
+─────────────────────────────────────────────
+Left vertical nav tabs — **exactly these 3, do not add "Notifications",
+"Sécurité" or "Intégrations", they aren't part of the current scope**:
+- Général (nom de l'application, logo — minimal placeholder panel)
+- Catégories & SLA [active by default]
+- Équipes (can just deep-link to Screen 6B)
+
+Catégories & SLA panel:
+"Catégories" — simple editable list (nom, équipe de routage par défaut),
+add/remove rows.
+"Règles SLA par priorité" — subtitle: "Les délais s'appliquent en temps
+calendaire pour cette version. La gestion des heures ouvrées n'est pas
+disponible."
+Editable table: Priorité | Délai de prise en charge | Délai de résolution
+(values from the SLA table above). Inline edit: click cell → input
+appears → [✓]/[✗]. Footer: [Annuler] [Enregistrer] → toast "Configuration
+SLA mise à jour". **No "Escalade" column.**
+
+─────────────────────────────────────────────
+SCREEN 8: PROFIL
+─────────────────────────────────────────────
+Avatar (initials placeholder), name, role badge, email.
+Edit form: Prénom / Nom / Email / Téléphone.
+[Changer le mot de passe] → inline section, 3 fields.
+[Sauvegarder].
+
+(No notification-preferences section, no notification bell in the top
+nav — this whole capability is out of scope for now, see below.)
+
+═══════════════════════════════════════════════
+INTERACTIONS & ROUTING
+═══════════════════════════════════════════════
+
+1. Login → role selection → correct dashboard (all 3 roles work)
+2. Sidebar navigation → all screens navigate correctly
+3. Incident table row click → incident detail
+4. "[+ Créer un incident]" → create form
+5. Create form submit → loading → success toast → redirect to detail
+6. "Changer le statut" → modal → confirm → badge updates → history entry
+   added → toast
+7. "Assigner"/"Réassigner" → agent list (filtered to the routed team) →
+   confirm → status/SLA/sidebar update, history entry added
+8. Comment submit → appears in thread immediately (respecting the
+   internal/public visibility rule)
+9. Demandeur, on a Résolu incident: "Valider la résolution" → confirm →
+   status → Clôturé. "Rouvrir l'incident" → required comment → status →
+   En cours. Both update the Historique tab.
+10. "[+ Inviter un utilisateur]" → drawer → submit → row added → toast
+11. Deactivate user → confirmation modal → confirm → status badge updates
+12. SLA configuration inline edit → save → toast
+13. Forgot password → success state
+14. Filter pills / advanced filters on incident list → table reacts
+15. Bulk select → bulk action bar (reassign / change category / export
+    only — no bulk resolve/close)
+16. "[+ Rédiger un article]" → form → publish or save draft → appears in
+    knowledge base list with correct badge
+17. Asset/team create-edit drawers → submit → table updates → toast
+
+═══════════════════════════════════════════════
+RESPONSIVE BREAKPOINTS
+═══════════════════════════════════════════════
+
+Desktop (≥1280px): full sidebar + main content
+Laptop (1024–1279px): sidebar collapses to icons (60px)
+Tablet (768–1023px): sidebar hidden, hamburger → overlay
+Mobile (<768px): columns stack, tables → card list, sidebar → bottom sheet
+or hamburger, KPI cards → 2×2 grid, forms → single column, detail tabs →
+accordion
+
+═══════════════════════════════════════════════
+QUALITY CONSTRAINTS
+═══════════════════════════════════════════════
+
+- No gradients anywhere (flat design), no shadow heavier than shadow-md
+- No colored backgrounds except badges, severity rails, and alert banners
+- Minimum contrast ratio 4.5:1 for all text (WCAG AA)
+- Focus rings on all interactive elements (3px cobalt-100 outline)
+- Transition: 150ms ease hover/focus, 200ms modals/drawers
+- Instant mock responses (no spinner over 2s)
+- IBM Plex Sans loaded for UI text, IBM Plex Mono for IDs/timestamps/SLA
+  countdowns, from Google Fonts
+- Lucide React icons, strokeWidth={1.5}, size={18} default
+- Initials avatars only, no placeholder images
+- French locale for all numbers/dates
+- Consistent 8px spacing grid
+- Every form field has an error state with helper text
+- Every button has aria-label or visible text
+- Every destructive action requires the confirmation pattern defined above
+
+═══════════════════════════════════════════════
+OUT OF SCOPE — do not build these
+═══════════════════════════════════════════════
+
+- Any email sending, SMTP configuration, or "notification preferences" UI
+- Notification bell / notification center
+- "Rapports" / analytics module
+- Escalation automation ("Escalade si dépassement")
+- Working-hours SLA calculation (only calendar-time for now)
+- Any 4th role (no "Technicien")
+- Third-party integrations settings
+- Bulk resolve/close of incidents

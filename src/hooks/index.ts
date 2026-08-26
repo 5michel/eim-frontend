@@ -1,7 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
 
-// ── Generic fetch hook ────────────────────────────────────────────────────
+function unwrapPayload(body: any) {
+  if (body == null) return body;
+  const payload = body.data !== undefined ? body.data : body;
+  if (payload && Array.isArray(payload.data) && payload.meta) {
+    return payload;
+  }
+  if (payload && Array.isArray(payload.data) && (payload.current_page !== undefined || payload.total !== undefined)) {
+    return {
+      data: payload.data,
+      meta: {
+        current_page: payload.current_page,
+        last_page: payload.last_page,
+        per_page: payload.per_page,
+        total: payload.total,
+      },
+    };
+  }
+  return payload;
+}
 
 export function useFetch<T>(url: string | null, params?: Record<string, unknown>, deps?: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -18,7 +36,7 @@ export function useFetch<T>(url: string | null, params?: Record<string, unknown>
     setError(null);
     try {
       const res = await api.get(target, { params: overrideParams ?? params, signal: abortRef.current.signal });
-      setData(res.data.data);
+      setData(unwrapPayload(res.data) as T);
     } catch (e: any) {
       if (e.name !== 'AbortError') setError(e.response?.data?.message ?? e.message ?? 'Erreur réseau');
     } finally {
@@ -63,7 +81,13 @@ export function useUsers(params?: Record<string, unknown>) {
   const create = useCallback(async (body: Record<string, unknown>) => {
     const res = await api.post('/users', body);
     refetch();
-    return res.data.data;
+    return res.data;
+  }, [refetch]);
+
+  const resendInvitation = useCallback(async (id: string) => {
+    const res = await api.post(`/users/${id}/invitation`);
+    refetch();
+    return res.data;
   }, [refetch]);
 
   const update = useCallback(async (id: string, body: Record<string, unknown>) => {
@@ -78,16 +102,16 @@ export function useUsers(params?: Record<string, unknown>) {
   }, [refetch]);
 
   const setDisponibilite = useCallback(async (id: string, disponible: boolean) => {
-    await api.put(`/users/${id}/disponibilite`, { disponible });
+    await api.patch(`/users/${id}/disponibilite`, { disponible });
     refetch();
   }, [refetch]);
 
   const setActif = useCallback(async (id: string, actif: boolean) => {
-    await api.put(`/users/${id}/activer`, { actif });
+    await api.patch(`/users/${id}/activer`, { actif });
     refetch();
   }, [refetch]);
 
-  return { data, loading, error, refetch, create, update, remove, setDisponibilite, setActif };
+  return { data, loading, error, refetch, create, update, remove, setDisponibilite, setActif, resendInvitation };
 }
 
 // ── Équipes ───────────────────────────────────────────────────────────────
@@ -165,6 +189,11 @@ export function useArticles(params?: Record<string, unknown>) {
   return { data, loading, error, refetch, create, update, remove };
 }
 
+export function useArticle(id: string | null) {
+  const { data, loading, error, refetch } = useFetch<any>(id ? `/articles/${id}` : null);
+  return { article: data, loading, error, refetch };
+}
+
 // ── Notifications ─────────────────────────────────────────────────────────
 
 export function useNotifications() {
@@ -172,8 +201,13 @@ export function useNotifications() {
 
   const unreadCount = (data ?? []).filter((n: any) => !n.date_lecture).length;
 
+  useEffect(() => {
+    const t = window.setInterval(() => { refetch(); }, 20000);
+    return () => window.clearInterval(t);
+  }, [refetch]);
+
   const markRead = useCallback(async (id: string) => {
-    await api.put(`/notifications/${id}/lire`);
+    await api.patch(`/notifications/${id}/lire`);
     refetch();
   }, [refetch]);
 
@@ -188,6 +222,52 @@ export function useNotifications() {
   }, [refetch]);
 
   return { notifications: data ?? [], unreadCount, loading, error, refetch, markRead, remove, clearAll };
+}
+
+export function useMotsClefs() {
+  const { data, loading, error, refetch } = useFetch<any[]>('/mots-clefs');
+
+  const create = useCallback(async (nom: string) => {
+    const res = await api.post('/mots-clefs', { nom });
+    refetch();
+    return res.data.data;
+  }, [refetch]);
+
+  const update = useCallback(async (id: string, nom: string) => {
+    const res = await api.put(`/mots-clefs/${id}`, { nom });
+    refetch();
+    return res.data.data;
+  }, [refetch]);
+
+  const remove = useCallback(async (id: string) => {
+    await api.delete(`/mots-clefs/${id}`);
+    refetch();
+  }, [refetch]);
+
+  return { motsClefs: data ?? [], loading, error, refetch, create, update, remove };
+}
+
+export function useTypesActifs() {
+  const { data, loading, error, refetch } = useFetch<any[]>('/types-actifs');
+
+  const create = useCallback(async (nom: string) => {
+    const res = await api.post('/types-actifs', { nom });
+    refetch();
+    return res.data.data;
+  }, [refetch]);
+
+  const update = useCallback(async (id: string, nom: string) => {
+    const res = await api.put(`/types-actifs/${id}`, { nom });
+    refetch();
+    return res.data.data;
+  }, [refetch]);
+
+  const remove = useCallback(async (id: string) => {
+    await api.delete(`/types-actifs/${id}`);
+    refetch();
+  }, [refetch]);
+
+  return { types: data ?? [], loading, error, refetch, create, update, remove };
 }
 
 // ── SLAs ──────────────────────────────────────────────────────────────────
@@ -225,7 +305,7 @@ export function useRapportsPerformance(params?: Record<string, unknown>) {
     setError(null);
     try {
       const res = await api.get('/rapports/performance', { params: p ?? params });
-      setData(res.data.data);
+      setData(unwrapPayload(res.data));
     } catch (e: any) {
       setError(e.response?.data?.message ?? e.message);
     } finally {

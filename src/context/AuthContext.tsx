@@ -53,22 +53,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 */
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
     try {
       const res = await api.post('/login', { email, password });
-      // La réponse du backend est : { success: true, data: { token, user } }
-      const { token, user } = res.data.data;
-      localStorage.setItem('eim_token', token);
-      localStorage.setItem('eim_user', JSON.stringify(user));
-      setToken(token);
-      setUser(user);
-    } catch (err) {
-      // ...
+      const { token: t, user: u } = res.data.data;
+      localStorage.setItem('eim_token', t);
+      localStorage.setItem('eim_user', JSON.stringify(u));
+      setToken(t);
+      setUser(u);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
   const logout = useCallback(async () => {
     try { await api.post('/logout'); } catch {}
     localStorage.removeItem('eim_token');

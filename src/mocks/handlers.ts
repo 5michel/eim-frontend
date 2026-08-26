@@ -103,13 +103,21 @@ export const handlers = [
     const me = getUserFromRequest(request);
     if (!me || me.role !== 'admin') return HttpResponse.json({ success: false, message: 'Accès refusé.' }, { status: 403 });
     const body = await request.json() as Partial<User> & { password?: string };
+    if (_users.some(u => u.email.toLowerCase() === (body.email ?? '').toLowerCase())) {
+      return HttpResponse.json({
+        success: false,
+        message: 'Un compte avec cette adresse email existe déjà.',
+        errors: { email: ['Un compte avec cette adresse email existe déjà.'] },
+      }, { status: 422 });
+    }
     const newUser: User = {
       id: `u${uid()}`, nom: body.nom ?? '', prenom: body.prenom ?? '', email: body.email ?? '',
-      role: body.role ?? 'client', actif: true, disponible: true,
-      id_equipe: body.id_equipe ?? null, date_derniere_connexion: new Date().toISOString(),
+      role: body.role ?? 'client', actif: false, disponible: body.disponible ?? true,
+      id_equipe: body.id_equipe ?? null, date_derniere_connexion: null,
     };
+    (newUser as any).invitation_en_attente = true;
     _users.push(newUser);
-    return HttpResponse.json({ success: true, data: newUser }, { status: 201 });
+    return HttpResponse.json({ success: true, message: "L'invitation a été envoyée.", data: newUser }, { status: 201 });
   }),
 
   http.put(`${BASE}/users/:id`, async ({ request, params }) => {
@@ -129,6 +137,42 @@ export const handlers = [
     if (hasActive) return HttpResponse.json({ success: false, message: 'Impossible de supprimer : cet utilisateur a des incidents actifs.' }, { status: 422 });
     _users = _users.filter(u => u.id !== params.id);
     return HttpResponse.json({ success: true });
+  }),
+
+  http.post(`${BASE}/users/:id/invitation`, ({ request, params }) => {
+    const me = getUserFromRequest(request);
+    if (!me || me.role !== 'admin') return HttpResponse.json({ success: false, message: 'Accès refusé.' }, { status: 403 });
+    const idx = _users.findIndex(u => u.id === params.id);
+    if (idx < 0) return HttpResponse.json({ success: false, message: 'Utilisateur introuvable.' }, { status: 404 });
+    if (_users[idx].actif) return HttpResponse.json({ success: false, message: 'Ce compte est déjà activé.' }, { status: 422 });
+    return HttpResponse.json({ success: true, message: "L'invitation a été envoyée.", data: _users[idx] });
+  }),
+
+  http.get(`${BASE}/invitation/:token`, ({ params }) => {
+    if (!params.token || params.token === 'invalid') {
+      return HttpResponse.json({ success: false, message: "Ce lien n'est pas ou plus valide. Si vous tenter de créer un compte, veuillez contacter l'administrateur de ce service pour disposer d'un autre lien." }, { status: 410 });
+    }
+    return HttpResponse.json({ success: true, data: { nom: 'Nouveau', prenom: 'Utilisateur', email: 'invite@eim.tg', role: 'client' } });
+  }),
+
+  http.post(`${BASE}/invitation/:token/activer`, async ({ request, params }) => {
+    if (!params.token || params.token === 'invalid') {
+      return HttpResponse.json({ success: false, message: "Ce lien n'est pas ou plus valide. Si vous tenter de créer un compte, veuillez contacter l'administrateur de ce service pour disposer d'un autre lien." }, { status: 410 });
+    }
+    const body = await request.json() as any;
+    if (_users.some(u => u.email.toLowerCase() === (body.email ?? '').toLowerCase())) {
+      return HttpResponse.json({
+        success: false,
+        message: 'Cette adresse email est déjà utilisée.',
+        errors: { email: ['Cette adresse email est déjà utilisée.'] },
+      }, { status: 422 });
+    }
+    const newUser: User = {
+      id: `u${uid()}`, nom: body.nom ?? '', prenom: body.prenom ?? '', email: body.email ?? '',
+      role: 'client', actif: true, disponible: true, id_equipe: null, date_derniere_connexion: null,
+    };
+    _users.push(newUser);
+    return HttpResponse.json({ success: true, message: 'Votre compte a été activé.', data: newUser });
   }),
 
   http.put(`${BASE}/users/:id/disponibilite`, async ({ request, params }) => {

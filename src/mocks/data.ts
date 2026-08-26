@@ -12,7 +12,7 @@ export interface User {
   actif: boolean;
   disponible: boolean;
   id_equipe: string | null;
-  date_derniere_connexion: string;
+  date_derniere_connexion: string | null;
 }
 
 export interface Impact {

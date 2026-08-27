@@ -10,7 +10,7 @@ import {
   AlertCircle, CheckCircle2, Clock, Zap, ArrowRight, ArrowLeft, Edit3, Trash2, Shield,
   UserCheck, User, ChevronUp, Eye, EyeOff, Hash, Calendar, Tag, MoreVertical,
   Activity, TrendingUp, AlertTriangle, Info, Menu, Building2, HardDrive,
-  Send, Lock, Unlock, BookOpen, Check, XCircle, Printer, Paperclip, Star,
+  Send, Lock, Unlock, BookOpen, Check, XCircle, Printer, Paperclip, Star, FileSpreadsheet,
 } from 'lucide-react';
 import { AuthProvider, useAuth, type AuthUser } from '../context/AuthContext';
 import {
@@ -22,6 +22,7 @@ import api from '../services/api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import mammoth from 'mammoth';
 import DOMPurify from 'dompurify';
+import * as XLSX from 'xlsx';
 
 // ── MSW startup ──────────────────────────────────────────────────────────────
 /*
@@ -436,7 +437,7 @@ function Sidebar({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const location = useLocation();
   const items = navItems.filter(n => n.roles.includes(user.role));
   return (
-    <aside className="w-56 flex-shrink-0 flex flex-col" style={{ background: M.n900, minHeight: '100vh' }}>
+    <aside className="no-print w-56 flex-shrink-0 flex flex-col" style={{ background: M.n900, minHeight: '100vh' }}>
       <div className="px-5 py-5 border-b border-[#2E2D29]">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded bg-[#2E4A6E] flex items-center justify-center">
@@ -476,7 +477,7 @@ function Sidebar({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
 
 function TopBar({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   return (
-    <header className="h-12 flex items-center px-6 border-b border-[#E2E1DC] bg-white gap-4 flex-shrink-0">
+    <header className="no-print h-12 flex items-center px-6 border-b border-[#E2E1DC] bg-white gap-4 flex-shrink-0">
       <div className="flex-1" />
       <NotificationBell />
       <Link to="/profile" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
@@ -1122,10 +1123,6 @@ function IncidentDetailPage() {
   const canDemandeurCloture = (isDemandeur || isAgentIntervenant || isManagerIntervenant || user?.role === 'admin') && inc.statut !== 'cloture';
   const canReouvrir = isDemandeur && inc.peut_etre_rouvert;
   const canPrendreEnCharge = isManagerOrAdmin && inc.statut === 'ouvert';
-  const dejaIntervenant = (inc.prestations_actives ?? []).some((p: any) => String(p.prestataire_id) === String(user?.id));
-  const canPrendrePrestation = user?.role === 'agent' && !!inc.gestion_active?.equipe_id
-    && String(inc.gestion_active.equipe_id) === String(user?.id_equipe) && !dejaIntervenant
-    && ['ouvert', 'en_cours'].includes(inc.statut);
   const canPass = isManagerOrAdmin && inc.statut === 'en_cours';
   const canReassigner = isManagerOrAdmin && inc.statut === 'en_cours';
   const canCloturer = isManagerOrAdmin && ['en_cours', 'resolu'].includes(inc.statut);
@@ -1152,7 +1149,6 @@ function IncidentDetailPage() {
         {canDemandeurCloture && <Btn variant="secondary" size="sm" onClick={() => setShowClotureClient(true)}><CheckCircle2 size={13} />Clôturer l'incident</Btn>}
         {canReouvrir && <Btn variant="outline" size="sm" onClick={() => setShowReopen(true)}><Unlock size={13} />Rouvrir l'incident</Btn>}
         {canPrendreEnCharge && <Btn size="sm" onClick={() => setShowPriseEnCharge(true)}><UserCheck size={13} />Prendre en charge</Btn>}
-        {canPrendrePrestation && <Btn size="sm" loading={actionLoading} onClick={() => doAction('prendre-prestation', {})}><UserCheck size={13} />Prendre cette prestation</Btn>}
         {canManagerEdit && <Btn variant="outline" size="sm" onClick={() => setShowReevaluer(true)}><Zap size={13} />Réévaluer (urgence / impact)</Btn>}
         {canManagerEdit && <Btn variant="ghost" size="sm" onClick={() => setShowGestionEdit(true)}><Tag size={13} />Résumé et mots-clés</Btn>}
         {canPass && <Btn variant="secondary" size="sm" onClick={() => setShowPasser(true)}><ArrowRight size={13} />Passer à un manager</Btn>}
@@ -1321,7 +1317,7 @@ function IncidentDetailPage() {
       <PasserModal open={showPasser} onClose={() => setShowPasser(false)} users={allUsers} loading={actionLoading}
         onSubmit={async (body) => { const ok = await doAction('passer', body); if (ok) setShowPasser(false); }} />
 
-      <ReassignerModal open={showReassigner} onClose={() => setShowReassigner(false)} users={allUsers} loading={actionLoading}
+      <ReassignerModal open={showReassigner} onClose={() => setShowReassigner(false)} users={allUsers} equipes={equipes} loading={actionLoading}
         onSubmit={async (body) => { const ok = await doAction('reassigner', body); if (ok) setShowReassigner(false); }} />
 
       <AssignerForceModal open={showAssignerForce} onClose={() => setShowAssignerForce(false)} users={allUsers} loading={actionLoading}
@@ -1640,19 +1636,44 @@ function PasserModal({ open, onClose, users, loading, onSubmit }: { open: boolea
   );
 }
 
-function ReassignerModal({ open, onClose, users, loading, onSubmit }: { open: boolean; onClose: () => void; users: any[]; loading: boolean; onSubmit: (body: any) => void }) {
-  const [agentId, setAgentId] = useState('');
-  const availableAgents = users.filter((u: any) => u.role === 'agent' && u.disponible);
+function EditRoleModal({ open, user, loading, onClose, onSubmit }: { open: boolean; user: any; loading: boolean; onClose: () => void; onSubmit: (role: string) => void }) {
+  const [role, setRole] = useState('');
 
-  useEffect(() => { if (!open) setAgentId(''); }, [open]);
+  useEffect(() => { setRole(user?.role ?? ''); }, [user, open]);
 
   return (
-    <Modal open={open} title="Réassigner l'agent" onClose={onClose} size="md"
-      footer={<><Btn variant="secondary" onClick={onClose}>Annuler</Btn><Btn loading={loading} disabled={!agentId} onClick={() => onSubmit({ agent_id: agentId })}>Réassigner</Btn></>}>
+    <Modal open={open} title="Modifier le rôle" onClose={onClose} size="sm"
+      footer={<><Btn variant="secondary" onClick={onClose}>Annuler</Btn><Btn loading={loading} disabled={!role || role === user?.role} onClick={() => onSubmit(role)}>Enregistrer</Btn></>}>
       <div className="space-y-4">
-        {availableAgents.length === 0 && <Alert type="warning">Aucun agent disponible actuellement.</Alert>}
-        <Select label="Nouvel agent *" value={agentId} onChange={e => setAgentId(e.target.value)} placeholder="— choisir —"
+        <p className="text-sm text-[#45443E]">Utilisateur : <strong>{user?.prenom} {user?.nom}</strong> ({user?.email})</p>
+        <Select label="Rôle *" value={role} onChange={e => setRole(e.target.value)}
+          options={[
+            { value: 'client', label: 'Utilisateur' },
+            { value: 'agent', label: 'Agent' },
+            { value: 'manager', label: 'Manager' },
+            { value: 'admin', label: 'Administrateur' },
+          ]} />
+      </div>
+    </Modal>
+  );
+}
+
+function ReassignerModal({ open, onClose, users, equipes, loading, onSubmit }: { open: boolean; onClose: () => void; users: any[]; equipes: any[]; loading: boolean; onSubmit: (body: any) => void }) {
+  const [agentId, setAgentId] = useState('');
+  const [equipeId, setEquipeId] = useState('');
+  const availableAgents = users.filter((u: any) => u.role === 'agent' && u.disponible);
+
+  useEffect(() => { if (!open) { setAgentId(''); setEquipeId(''); } }, [open]);
+
+  return (
+    <Modal open={open} title="Réassigner" onClose={onClose} size="md"
+      footer={<><Btn variant="secondary" onClick={onClose}>Annuler</Btn><Btn loading={loading} disabled={!agentId && !equipeId} onClick={() => onSubmit({ agent_id: agentId || undefined, equipe_id: equipeId || undefined })}>Réassigner</Btn></>}>
+      <div className="space-y-4">
+        {availableAgents.length === 0 && <Alert type="warning">Aucun agent disponible actuellement. Vous pouvez réassigner à une équipe.</Alert>}
+        <Select label="Nouvel agent" value={agentId} onChange={e => { setAgentId(e.target.value); if (e.target.value) setEquipeId(''); }} placeholder="— choisir —"
             options={availableAgents.map((u: any) => ({ value: String(u.id), label: `${u.prenom} ${u.nom}` }))} />
+        <Select label="Ou réassigner à une équipe (tous ses agents pourront intervenir)" value={equipeId} onChange={e => { setEquipeId(e.target.value); if (e.target.value) setAgentId(''); }}
+          placeholder="— choisir une équipe —" options={equipes.map((e: any) => ({ value: String(e.id), label: e.nom }))} />
       </div>
     </Modal>
   );
@@ -2146,6 +2167,8 @@ function UsersPage() {
   const [actionError, setActionError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [resendingId, setResendingId] = useState<string | number | null>(null);
+  const [editRoleUser, setEditRoleUser] = useState<any | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
 
   const handleDelete = async (u: any) => {
     setDeleteError('');
@@ -2189,7 +2212,11 @@ function UsersPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => setEditRoleUser(u)} className="inline-flex items-center gap-1.5 hover:opacity-80 transition-opacity" title="Modifier le rôle">
+                        <RoleBadge role={u.role} /><Edit3 size={11} className="text-[#ADABA1]" />
+                      </button>
+                    </td>
                     <td className="px-4 py-3"><span className="text-xs text-[#605F57]">{equipe?.nom ?? '—'}</span></td>
                     <td className="px-4 py-3">
                       <button onClick={async () => {
@@ -2242,6 +2269,17 @@ function UsersPage() {
           const res = await create(body);
           setInviteSuccess(res?.message ?? "L'invitation a été envoyée.");
           setShowForm(false);
+        }} />
+
+      <EditRoleModal open={!!editRoleUser} user={editRoleUser} loading={roleLoading} onClose={() => setEditRoleUser(null)}
+        onSubmit={async (role) => {
+          setActionError(''); setRoleLoading(true);
+          try {
+            await update(editRoleUser.id, { role });
+            setEditRoleUser(null);
+          } catch (e: any) {
+            setActionError(e.response?.data?.message ?? 'Erreur.');
+          } finally { setRoleLoading(false); }
         }} />
 
       <Modal open={!!confirmDelete} title="Supprimer l'utilisateur" onClose={() => { setConfirmDelete(null); setDeleteError(''); }} size="sm"
@@ -2859,10 +2897,42 @@ function RapportsPage() {
 
   useEffect(() => { generate({}); }, []);
 
+  const exportExcel = () => {
+    if (!data) return;
+    const wb = XLSX.utils.book_new();
+
+    const resume = [
+      ['Total incidents', data.total],
+      ['Clôturés', data.cloturesCount],
+      ['Taux de résolution (%)', data.tauxResolution],
+      ...data.byStatut.map((s: any) => [`Statut : ${statutLabel(s.statut)}`, s.count]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resume), 'Résumé');
+
+    const priorites = [['Priorité', 'Nombre'], ...data.byPriorite.map((p: any) => [p.nom, p.count])];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(priorites), 'Par priorité');
+
+    const agents = [
+      ['Agent', 'Prestations', 'Résolus', 'Durée moy. (min)', 'Ratio global (%)', 'Note moy.'],
+      ...data.byAgent.map((row: any) => [
+        `${row.agent.prenom} ${row.agent.nom}`,
+        row.prestations,
+        row.resolus,
+        row.dureeMoyenneMinutes ?? '',
+        row.ratioGlobal ?? '',
+        row.noteMoyenne ?? '',
+      ]),
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(agents), 'Performance agents');
+
+    const periode = (dateDebut || dateFin) ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}` : '';
+    XLSX.writeFile(wb, `statistiques-eim${periode}.xlsx`);
+  };
+
   return (
     <div className="max-w-5xl">
       <h1 className="text-xl font-semibold text-[#1C1B18] mb-6">Statistiques</h1>
-      <div className="bg-white rounded-lg border border-[#E2E1DC] p-4 mb-6">
+      <div className="no-print bg-white rounded-lg border border-[#E2E1DC] p-4 mb-6">
         <div className="flex flex-wrap gap-4 items-end">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-[#605F57] uppercase tracking-wide">Date début</label>
@@ -2875,6 +2945,9 @@ function RapportsPage() {
           <Btn loading={loading} onClick={() => generate({ date_debut: dateDebut || undefined, date_fin: dateFin || undefined })}><BarChart2 size={14} />Rafraîchir les statistiques</Btn>
           <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 text-sm border border-[#E2E1DC] rounded hover:bg-[#F7F7F5] text-[#45443E]">
             <Printer size={14} />Imprimer la page
+          </button>
+          <button onClick={exportExcel} disabled={!data} className="flex items-center gap-2 px-4 py-2 text-sm border border-[#E2E1DC] rounded hover:bg-[#F7F7F5] text-[#45443E] disabled:opacity-50">
+            <FileSpreadsheet size={14} />Exporter en Excel
           </button>
         </div>
       </div>

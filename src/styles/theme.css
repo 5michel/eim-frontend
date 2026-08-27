@@ -206,3 +206,20 @@
     line-height: 1.5;
   }
 }
+
+/* L'impression (bouton "Imprimer" des statistiques) ne doit reproduire que l'onglet actif,
+   pas le menu de navigation ni les contrôles qui n'ont pas leur place sur papier. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: #fff !important;
+  }
+}

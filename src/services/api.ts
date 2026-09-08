@@ -2,6 +2,8 @@
 // Exposes the same shape: api.get/post/put/delete return { data: responseBody }.
 // Interceptors: request adds Bearer token, response handles 401 auto-logout.
 
+import { clearSession, getToken as readToken } from './session';
+
 const BASE_URL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) ||
   '/api';
@@ -27,7 +29,7 @@ class ApiError extends Error {
 }
 
 function getToken(): string | null {
-  try { return localStorage.getItem('eim_token'); } catch { return null; }
+  return readToken();
 }
 
 function buildUrl(path: string, params?: Record<string, unknown>): string {
@@ -70,7 +72,7 @@ async function request<T = any>(
   try { data = await res.json(); } catch { data = {}; }
 
   if (res.status === 401) {
-    try { localStorage.removeItem('eim_token'); localStorage.removeItem('eim_user'); } catch {}
+    clearSession();
     if (typeof window !== 'undefined' && !path.includes('/login') && !path.includes('/invitation')) {
       window.location.href = '/login';
     }

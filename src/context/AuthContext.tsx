@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import api from '../services/api';
+import { clearSession, getStoredSession, setSession, setStoredUser } from '../services/session';
 
 export interface AuthUser {
   id: string;
@@ -25,12 +26,8 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function loadFromStorage(): { user: AuthUser | null; token: string | null } {
-  try {
-    const token = localStorage.getItem('eim_token');
-    const userStr = localStorage.getItem('eim_user');
-    if (token && userStr) return { token, user: JSON.parse(userStr) };
-  } catch {}
-  return { user: null, token: null };
+  const { token, user } = getStoredSession<AuthUser>();
+  return { token, user };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -38,28 +35,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(stored.user);
   const [token, setToken] = useState<string | null>(stored.token);
   const [loading, setLoading] = useState(false);
-/* //== Old version ==
+
   const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
     try {
       const res = await api.post('/login', { email, password });
       const { token: t, user: u } = res.data.data;
-      localStorage.setItem('eim_token', t);
-      localStorage.setItem('eim_user', JSON.stringify(u));
-      setToken(t);
-      setUser(u);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-*/
-  const login = useCallback(async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      const res = await api.post('/login', { email, password });
-      const { token: t, user: u } = res.data.data;
-      localStorage.setItem('eim_token', t);
-      localStorage.setItem('eim_user', JSON.stringify(u));
+      setSession(t, u);
       setToken(t);
       setUser(u);
     } finally {
@@ -68,15 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
   const logout = useCallback(async () => {
     try { await api.post('/logout'); } catch {}
-    localStorage.removeItem('eim_token');
-    localStorage.removeItem('eim_user');
+    clearSession();
     setToken(null);
     setUser(null);
   }, []);
 
   const updateUser = useCallback((u: AuthUser) => {
     setUser(u);
-    localStorage.setItem('eim_user', JSON.stringify(u));
+    setStoredUser(u);
   }, []);
 
   return (

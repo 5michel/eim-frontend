@@ -10,7 +10,7 @@ import {
   AlertCircle, CheckCircle2, Clock, Zap, ArrowRight, ArrowLeft, Edit3, Trash2, Shield,
   UserCheck, User, ChevronUp, Eye, EyeOff, Hash, Calendar, Tag, MoreVertical,
   Activity, TrendingUp, AlertTriangle, Info, Menu, Building2, HardDrive,
-  Send, Lock, Unlock, BookOpen, Check, XCircle, Printer, Paperclip, Star, FileSpreadsheet,
+  Send, Lock, Unlock, BookOpen, Check, XCircle, Printer, Paperclip, Star, FileSpreadsheet, Mail,
 } from 'lucide-react';
 import { AuthProvider, useAuth, type AuthUser } from '../context/AuthContext';
 import {
@@ -19,6 +19,7 @@ import {
   useMotsClefs, useTypesActifs,
 } from '../hooks/index';
 import api from '../services/api';
+import { getToken as getSessionToken } from '../services/session';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import mammoth from 'mammoth';
 import DOMPurify from 'dompurify';
@@ -51,6 +52,12 @@ const M = {
   sage50: '#EEF3EA', sage500: '#5C7A4C', sage700: '#435A37',
 };
 
+// Formats de pièce jointe pris en charge (section 10, point 3) — doit rester cohérent avec la
+// liste blanche appliquée côté serveur (config/pieces_jointes.php, PieceJointeService). Purement
+// indicatif : le filtre du sélecteur de fichier peut être outrepassé par l'utilisateur, la
+// validation qui compte est celle du backend.
+const ACCEPTED_FILE_TYPES = '.png,.jpg,.jpeg,.gif,.webp,.svg,.bmp,.pdf,.doc,.docx,.odt,.rtf,.txt,.md,.csv,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.zip,.json,.log';
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 const prioriteColor = (nom: string) => {
@@ -58,6 +65,8 @@ const prioriteColor = (nom: string) => {
     case 'Critique': return { bg: M.brick50, text: M.brick700, rail: M.brick500 };
     case 'Haute': return { bg: M.amber50, text: M.amber700, rail: M.amber500 };
     case 'Moyenne': return { bg: M.cobalt50, text: M.cobalt700, rail: M.cobalt500 };
+    case 'Basse': return { bg: M.sage50, text: M.sage700, rail: M.sage500 };
+    case 'Planifiée': return { bg: M.n100, text: M.n600, rail: M.n300 };
     default: return { bg: M.n100, text: M.n600, rail: M.n300 };
   }
 };
@@ -377,8 +386,8 @@ function NotificationBell() {
       <button onClick={() => { setOpen(!open); setInfo(''); }} className="relative p-2 rounded hover:bg-[#EFEFEC] transition-colors" aria-label="Notifications">
         <Bell size={18} className="text-[#605F57]" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 w-4 h-4 rounded-full bg-[#A8402F] text-white text-[9px] font-bold flex items-center justify-center">
-            {unreadCount > 9 ? '9+' : unreadCount}
+          <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-[#A8402F] text-white text-[9px] font-bold flex items-center justify-center tabular-nums">
+            {unreadCount}
           </span>
         )}
       </button>
@@ -616,7 +625,7 @@ function LoginPage() {
           </div>
           <h2 className="text-xl font-semibold text-white mb-3">Efficient Issues Manager</h2>
           <p className="text-sm text-[#605F57] leading-relaxed">
-            Gérez vos incidents informatiques de bout en bout — signalement, prise en charge, résolution et clôture.
+            Gérez vos incidents informatiques de bout en bout <br></br> Signalement, prise en charge, résolution et clôture.
           </p>
           <div className="mt-10 space-y-3">
             {['Suivi en temps réel', 'Gestion des SLA', 'Base de connaissances', 'Rapports de performance'].map(f => (
@@ -1202,6 +1211,7 @@ function IncidentDetailPage() {
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium text-[#45443E]">{c.auteur?.prenom} {c.auteur?.nom}</span>
                         {c.est_interne && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: M.amber50, color: M.amber700 }}>Interne</span>}
+                        {c.source === 'email' && <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-0.5" style={{ background: M.cobalt50, color: M.cobalt600 }} title="Commentaire créé automatiquement depuis une réponse par email"><Mail size={9} />Par email</span>}
                         <span className="text-[10px] text-[#86847A] ml-auto font-mono" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{fmtDate(c.date_creation)}</span>
                       </div>
                       <p className="text-sm text-[#45443E] leading-relaxed">{c.contenu}</p>
@@ -1249,6 +1259,7 @@ function IncidentDetailPage() {
             <InfoRow label="Créé le" value={fmtDate(inc.date_creation)} mono />
             {inc.date_prise_en_charge && <InfoRow label="Pris en charge" value={fmtDate(inc.date_prise_en_charge)} mono />}
             {inc.date_cloture && <InfoRow label="Clôturé le" value={fmtDate(inc.date_cloture)} mono />}
+            {inc.date_reouverture && <InfoRow label="Réouvert le" value={fmtDate(inc.date_reouverture)} mono />}
             {inc.actif && <InfoRow label="Actif concerné" value={inc.actif.nom} />}
           </InfoCard>
 
@@ -1336,7 +1347,7 @@ function IncidentDetailPage() {
             : "L'incident sera marqué comme clôturé. Le demandeur pourra le rouvrir pendant le délai configuré, puisque ce n'est pas lui qui clôture."}
         </p>
         {isDemandeur && (
-          <div>
+          <div hidden>
             <p className="text-xs text-[#86847A] mb-2">Note de la prestation (optionnel)</p>
             <div className="flex gap-1">
               {[1, 2, 3, 4, 5].map(n => (
@@ -1410,7 +1421,7 @@ function PieceJointeViewerModal({ piece, fileUrl, onClose }: { piece: any | null
     if (!piece || !fileUrl) { setBlobUrl(null); setDocxHtml(null); return; }
     const ext = getFileExt(piece.nom_original);
     const isDocx = DOCX_EXTS.includes(ext);
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('eim_token') : null;
+    const token = getSessionToken();
     let currentUrl: string | null = null;
     setLoading(true); setError(''); setDocxHtml(null);
     fetch(fileUrl, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
@@ -1488,7 +1499,7 @@ function DocumentsIncident({ incidentId, documents, onChanged, disabled }: { inc
         <h3 className="text-sm font-semibold text-[#45443E]">Documents</h3>
         {!disabled && (
           <>
-            <input ref={fileRef} type="file" className="hidden" onChange={upload} />
+            <input ref={fileRef} type="file" accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={upload} />
             <Btn variant="outline" size="sm" loading={uploading} onClick={() => fileRef.current?.click()}><Paperclip size={12} />Ajouter</Btn>
           </>
         )}
@@ -1815,7 +1826,7 @@ function PrestationDocuments({ prestationId, canUpload }: { prestationId: number
         <span className="text-xs font-semibold text-[#86847A] uppercase tracking-wide">Pièces jointes</span>
         {canUpload && (
           <>
-            <input ref={fileRef} type="file" className="hidden" onChange={upload} />
+            <input ref={fileRef} type="file" accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={upload} />
             <Btn variant="ghost" size="sm" loading={uploading} onClick={() => fileRef.current?.click()}><Paperclip size={11} />Ajouter</Btn>
           </>
         )}
@@ -2846,32 +2857,37 @@ function SLAConfig() {
 }
 
 function PriorityMatrix() {
-  const { impacts, urgences, priorites, loading } = useImpactsUrgences();
+  const { impacts, urgences, priorites, matrice, loading } = useImpactsUrgences();
   if (loading) return <LoadingSpinner />;
+  const prioriteParCombo = new Map<string, any>();
+  for (const m of matrice) {
+    const p = priorites.find((pr: any) => pr.id === m.priorite_id);
+    if (p) prioriteParCombo.set(`${m.impact_id}-${m.urgence_id}`, p);
+  }
   return (
     <div className="bg-white rounded-lg border border-[#E2E1DC] p-6">
-      <h3 className="text-sm font-semibold text-[#1C1B18] mb-6">Matrice Impact × Urgence → Priorité</h3>
+      <h3 className="text-sm font-semibold text-[#1C1B18] mb-1">Matrice Impact × Urgence → Priorité</h3>
+      <p className="text-xs text-[#86847A] mb-6">Grille de référence ITIL4 (non calculée par produit — deux combinaisons peuvent aboutir à la même priorité).</p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr>
               <th className="text-left px-3 py-2 text-[#86847A] font-medium">Impact \ Urgence</th>
-              {urgences.map((u: any) => <th key={u.id} className="px-3 py-2 text-center text-[#86847A] font-medium">{u.nom} ({u.valeur})</th>)}
+              {urgences.map((u: any) => <th key={u.id} className="px-3 py-2 text-center text-[#86847A] font-medium">{u.nom}</th>)}
             </tr>
           </thead>
           <tbody>
             {impacts.map((imp: any) => (
               <tr key={imp.id} className="border-t border-[#EFEFEC]">
-                <td className="px-3 py-3 font-medium text-[#45443E]">{imp.nom} ({imp.valeur})</td>
+                <td className="px-3 py-3 font-medium text-[#45443E]">{imp.nom}</td>
                 {urgences.map((urg: any) => {
-                  const pv = imp.valeur * urg.valeur;
-                  const p = priorites.find((pr: any) => Number(pr.valeur) === Number(pv));
+                  const p = prioriteParCombo.get(`${imp.id}-${urg.id}`);
                   const pc = prioriteColor(p?.nom ?? '');
                   return (
                     <td key={urg.id} className="px-3 py-3 text-center">
                       {p ? (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ background: pc.bg, color: pc.text }}>
-                          {p.nom} ({pv})
+                          {p.nom}
                         </span>
                       ) : <span className="text-[#A8402F]">—</span>}
                     </td>
@@ -2893,6 +2909,11 @@ function RapportsPage() {
   const { generate, data, loading, error } = useRapportsPerformance();
   const [dateDebut, setDateDebut] = useState('');
   const [dateFin, setDateFin] = useState('');
+  const [tab, setTab] = useState<'ensemble' | 'sla' | 'agents' | 'equipes' | 'qualite' | 'connaissance' | 'utilisateurs'>('ensemble');
+  const tabLabels: Record<string, string> = {
+    ensemble: 'Vue d’ensemble', sla: 'SLA & délais', agents: 'Agents', equipes: 'Managers & équipes',
+    qualite: 'Qualité', connaissance: 'Connaissances & actifs', utilisateurs: 'Utilisateurs',
+  };
   const CHART_COLORS = [M.cobalt500, M.brick500, M.sage500, '#7B5EA7', M.amber500, '#2E8B8B', '#B3467C', '#8A8A3D', M.n400];
 
   useEffect(() => { generate({}); }, []);
@@ -2930,7 +2951,7 @@ function RapportsPage() {
   };
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-6xl">
       <h1 className="text-xl font-semibold text-[#1C1B18] mb-6">Statistiques</h1>
       <div className="no-print bg-white rounded-lg border border-[#E2E1DC] p-4 mb-6">
         <div className="flex flex-wrap gap-4 items-end">
@@ -2957,75 +2978,468 @@ function RapportsPage() {
 
       {data && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Total incidents" value={data.total} icon={FileText} />
-            <StatCard label="Clôturés" value={data.cloturesCount} icon={CheckCircle2} color={M.sage500} />
-            <StatCard label="Taux de résolution" value={`${data.tauxResolution}%`} icon={TrendingUp} color={data.tauxResolution >= 70 ? M.sage500 : M.amber500} />
-            <StatCard label="En cours" value={data.byStatut.find((s: any) => s.statut === 'en_cours')?.count ?? 0} icon={Clock} />
+          <div className="no-print flex flex-wrap gap-1 bg-[#EFEFEC] rounded-lg p-1 w-fit">
+            {(['ensemble', 'sla', 'agents', 'equipes', 'qualite', 'connaissance', 'utilisateurs'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-4 py-1.5 rounded text-sm transition-colors ${tab === t ? 'bg-white font-medium text-[#1C1B18] shadow-sm' : 'text-[#605F57]'}`}>
+                {tabLabels[t]}
+              </button>
+            ))}
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
-              <h3 className="text-sm font-semibold text-[#45443E] mb-4">Incidents par statut</h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={data.byStatut}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
-                  <XAxis dataKey="statut" tick={{ fontSize: 10, fill: M.n500 }} tickFormatter={statutLabel} />
-                  <YAxis tick={{ fontSize: 10, fill: M.n500 }} />
-                  <Tooltip formatter={(v: any) => [v, 'Incidents']} labelFormatter={statutLabel} />
-                  <Bar dataKey="count" fill={M.cobalt500} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+          {tab === 'ensemble' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard label="Total incidents" value={data.total} icon={FileText} />
+                <StatCard label="Clôturés" value={data.cloturesCount} icon={CheckCircle2} color={M.sage500} />
+                <StatCard label="Taux de résolution" value={`${data.tauxResolution}%`} icon={TrendingUp} color={data.tauxResolution >= 70 ? M.sage500 : M.amber500} />
+                <StatCard label="Taux de réouverture" value={`${data.tauxReouverture}%`} icon={RefreshCw} color={data.tauxReouverture > 10 ? M.brick500 : M.n500} />
+              </div>
 
-            <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
-              <h3 className="text-sm font-semibold text-[#45443E] mb-4">Répartition par priorité</h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={data.byPriorite.filter((p: any) => p.count > 0)} dataKey="count" nameKey="nom" cx="50%" cy="50%" outerRadius={75}>
-                    {data.byPriorite.filter((p: any) => p.count > 0).map((_: any, i: number) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: 12 }} />
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-4">Incidents par statut</h3>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={data.byStatut}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
+                      <XAxis dataKey="statut" tick={{ fontSize: 10, fill: M.n500 }} tickFormatter={statutLabel} />
+                      <YAxis tick={{ fontSize: 10, fill: M.n500 }} />
+                      <Tooltip formatter={(v: any) => [v, 'Incidents']} labelFormatter={statutLabel} />
+                      <Bar dataKey="count" fill={M.cobalt500} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
 
-          <div className="bg-white rounded-lg border border-[#E2E1DC] p-5 mb-6">
-            <h3 className="text-sm font-semibold text-[#45443E] mb-4">Performance par agent</h3>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E1DC]">
-                  <th className="text-left px-4 py-2 text-[10px] text-[#86847A] uppercase">Agent</th>
-                  <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Prestations</th>
-                  <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Résolus</th>
-                  <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Durée moy.</th>
-                  <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Ratio global</th>
-                  <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Note moy.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.byAgent.map((row: any) => (
-                  <tr key={row.agent.id} className="border-b border-[#EFEFEC]">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <Avatar user={row.agent} size="xs" />
-                        <span className="text-[#45443E]">{row.agent.prenom} {row.agent.nom}</span>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-4">Répartition par priorité</h3>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie data={data.byPriorite.filter((p: any) => p.count > 0)} dataKey="count" nameKey="nom" cx="50%" cy="50%" outerRadius={75}>
+                        {data.byPriorite.filter((p: any) => p.count > 0).map((_: any, i: number) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: 12 }} />
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-4">Nouveaux incidents par jour</h3>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={data.tendance}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: M.n500 }} tickFormatter={(d: string) => d.slice(5)} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: M.n500 }} allowDecimals={false} />
+                    <Tooltip formatter={(v: any) => [v, 'Incidents']} />
+                    <Bar dataKey="count" fill={M.cobalt500} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-4">Répartition par impact</h3>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={data.byImpact} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: M.n500 }} allowDecimals={false} />
+                      <YAxis type="category" dataKey="nom" tick={{ fontSize: 11, fill: M.n600 }} width={70} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill={M.amber500} radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-4">Répartition par urgence</h3>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={data.byUrgence} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
+                      <XAxis type="number" tick={{ fontSize: 10, fill: M.n500 }} allowDecimals={false} />
+                      <YAxis type="category" dataKey="nom" tick={{ fontSize: 11, fill: M.n600 }} width={70} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill={M.brick500} radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-3 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Ancienneté des incidents ouverts</h3>
+                  <div className="space-y-2">
+                    {data.ancienneteOuverts.map((a: any) => (
+                      <div key={a.tranche} className="flex items-center justify-between text-sm">
+                        <span className="text-[#605F57]">{a.tranche}</span>
+                        <span className="font-medium text-[#1C1B18]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{a.count}</span>
                       </div>
-                    </td>
-                    <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.prestations}</td>
-                    <td className="px-4 py-3 text-right" style={{ fontFamily: "'IBM Plex Mono', monospace", color: row.resolus > 0 ? M.sage500 : M.n400 }}>{row.resolus}</td>
-                    <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.dureeMoyenneMinutes != null ? formatDuree(row.dureeMoyenneMinutes) : '—'}</td>
-                    <td className="px-4 py-3 text-right" style={{ fontFamily: "'IBM Plex Mono', monospace", color: row.ratioGlobal == null ? M.n400 : row.ratioGlobal <= 100 ? M.sage500 : row.ratioGlobal <= 150 ? M.amber500 : M.brick500 }}>{row.ratioGlobal != null ? `${row.ratioGlobal}%` : '—'}</td>
-                    <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.noteMoyenne != null ? `${row.noteMoyenne}/5` : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Origine du signalement</h3>
+                  <div className="space-y-2">
+                    {data.parOrigine.map((o: any) => (
+                      <div key={o.origine} className="flex items-center justify-between text-sm">
+                        <span className="text-[#605F57]">{o.origine}</span>
+                        <span className="font-medium text-[#1C1B18]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{o.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Top mots-clés</h3>
+                  <div className="space-y-2">
+                    {data.byMotClef.length === 0 && <p className="text-sm text-[#86847A]">Aucun</p>}
+                    {data.byMotClef.map((m: any) => (
+                      <div key={m.nom} className="flex items-center justify-between text-sm">
+                        <span className="text-[#605F57] truncate">{m.nom}</span>
+                        <span className="font-medium text-[#1C1B18]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{m.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-3">Actifs les plus concernés</h3>
+                {data.byActif.length === 0 ? <p className="text-sm text-[#86847A]">Aucun actif lié aux incidents de la période.</p> : (
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
+                    {data.byActif.map((a: any) => (
+                      <div key={a.nom} className="flex items-center justify-between text-sm">
+                        <span className="text-[#605F57] truncate">{a.nom}</span>
+                        <span className="font-medium text-[#1C1B18]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{a.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'sla' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard label="Respect SLA réponse" value={data.sla.tauxRespectReponse != null ? `${data.sla.tauxRespectReponse}%` : '—'} icon={Zap} color={data.sla.tauxRespectReponse == null ? undefined : data.sla.tauxRespectReponse >= 90 ? M.sage500 : M.amber500} />
+                <StatCard label="Respect SLA résolution" value={data.sla.tauxRespectResolution != null ? `${data.sla.tauxRespectResolution}%` : '—'} icon={CheckCircle2} color={data.sla.tauxRespectResolution == null ? undefined : data.sla.tauxRespectResolution >= 90 ? M.sage500 : M.amber500} />
+                <StatCard label="En retard actuellement" value={data.sla.enRetardActuellement} icon={AlertTriangle} color={data.sla.enRetardActuellement > 0 ? M.brick500 : M.sage500} />
+                <StatCard label="Escalades (période)" value={data.sla.nbEscalades} icon={TrendingUp} color={data.sla.nbEscalades > 0 ? M.amber500 : M.sage500} />
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Temps de réponse réel</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-[#605F57]">Moyenne</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.reponseMoyenMinutes != null ? formatDuree(data.sla.reponseMoyenMinutes) : '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Médiane</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.reponseMedianMinutes != null ? formatDuree(data.sla.reponseMedianMinutes) : '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Maximum</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.reponseMaxMinutes != null ? formatDuree(data.sla.reponseMaxMinutes) : '—'}</span></div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Temps de résolution réel</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-[#605F57]">Moyenne</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.resolutionMoyenMinutes != null ? formatDuree(data.sla.resolutionMoyenMinutes) : '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Médiane</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.resolutionMedianMinutes != null ? formatDuree(data.sla.resolutionMedianMinutes) : '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Maximum</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.resolutionMaxMinutes != null ? formatDuree(data.sla.resolutionMaxMinutes) : '—'}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Escalades</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-[#605F57]">Nombre d'escalades (période)</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.nbEscalades}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Délai moyen avant 1ère escalade</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.sla.delaiMoyenAvantEscaladeHeures != null ? `${data.sla.delaiMoyenAvantEscaladeHeures} h` : '—'}</span></div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Écart global durée réelle / SLA</h3>
+                  <p className="text-2xl font-semibold" style={{ color: data.sla.ecartMoyenDureeVsSlaPourcent == null ? M.n400 : data.sla.ecartMoyenDureeVsSlaPourcent <= 100 ? M.sage500 : data.sla.ecartMoyenDureeVsSlaPourcent <= 150 ? M.amber500 : M.brick500 }}>
+                    {data.sla.ecartMoyenDureeVsSlaPourcent != null ? `${data.sla.ecartMoyenDureeVsSlaPourcent}%` : '—'}
+                  </p>
+                  <p className="text-xs text-[#86847A] mt-1">100 % = prestations dans les temps du SLA de résolution, en moyenne.</p>
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Incidents par SLA appliqué</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.configuration.incidentsParSla.length === 0 && <p className="text-[#86847A]">Aucun SLA appliqué sur la période.</p>}
+                    {data.configuration.incidentsParSla.map((s: any) => (
+                      <div key={s.nom} className="flex justify-between"><span className="text-[#605F57]">{s.nom}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{s.count}</span></div>
+                    ))}
+                    <div className="flex justify-between pt-2 border-t border-[#EFEFEC]"><span className="text-[#605F57]">Sur SLA par défaut (non pris en charge)</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.configuration.incidentsSurSlaDefaut}</span></div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Historique des changements de priorité</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.configuration.historiqueParMotif.map((m: any) => (
+                      <div key={m.motif} className="flex justify-between"><span className="text-[#605F57]">{m.motif === 'prise_en_charge' ? 'Prise en charge' : m.motif === 'reevaluation' ? 'Réévaluation' : 'Escalade SLA'}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{m.count}</span></div>
+                    ))}
+                    <div className="flex justify-between pt-2 border-t border-[#EFEFEC]"><span className="text-[#605F57]">Moyenne de changements par incident</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.configuration.nbMoyenChangementsPrioriteParIncident}</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'qualite' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard label="Note de satisfaction moyenne" value={data.qualite.noteMoyenneGlobale != null ? `${data.qualite.noteMoyenneGlobale}/5` : '—'} icon={Star} color={M.amber500} />
+                <StatCard label="Commentaires / incident" value={data.qualite.commentairesMoyenParIncident} icon={FileText} />
+                <StatCard label="Pièces jointes / incident" value={data.qualite.piecesJointesMoyenParIncident} icon={Paperclip} />
+                <StatCard label="Taux de réutilisation PJ" value={`${data.qualite.tauxReutilisationPiecesJointes}%`} icon={Layers} />
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-4">Évolution de la note moyenne</h3>
+                  {data.qualite.evolutionNoteMoyenne.length === 0 ? <p className="text-sm text-[#86847A]">Aucune prestation notée sur la période.</p> : (
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={data.qualite.evolutionNoteMoyenne}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={M.n100} />
+                        <XAxis dataKey="mois" tick={{ fontSize: 10, fill: M.n500 }} />
+                        <YAxis domain={[0, 5]} tick={{ fontSize: 10, fill: M.n500 }} />
+                        <Tooltip formatter={(v: any) => [`${v}/5`, 'Note moyenne']} />
+                        <Bar dataKey="noteMoyenne" fill={M.amber500} radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Clôture par le demandeur vs un intervenant</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.qualite.tauxClotureOrigine.map((o: any) => (
+                      <div key={o.origine} className="flex justify-between"><span className="text-[#605F57]">{o.origine}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{o.count}</span></div>
+                    ))}
+                  </div>
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3 mt-5">Commentaires</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-[#605F57]">Internes</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.qualite.commentairesInternes}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Visibles client</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.qualite.commentairesVisibles}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Délai moyen entre 2 commentaires</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.qualite.reactiviteMoyenneMinutes != null ? formatDuree(data.qualite.reactiviteMoyenneMinutes) : '—'}</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'connaissance' && (
+            <div className="space-y-6">
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Articles par statut</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.baseConnaissance.articlesParStatut.map((s: any) => (
+                      <div key={s.statut} className="flex justify-between"><span className="text-[#605F57] capitalize">{s.statut}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{s.count}</span></div>
+                    ))}
+                    <div className="flex justify-between pt-2 border-t border-[#EFEFEC]"><span className="text-[#605F57]">Actifs couverts par la documentation</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.baseConnaissance.actifsCouvertsParDoc}</span></div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Articles publiés par auteur</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.baseConnaissance.articlesParAuteur.length === 0 && <p className="text-[#86847A]">Aucun article publié.</p>}
+                    {data.baseConnaissance.articlesParAuteur.map((a: any) => (
+                      <div key={a.auteur} className="flex justify-between"><span className="text-[#605F57]">{a.auteur}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{a.count}</span></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Actifs par statut</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.actifs.actifsParStatut.map((s: any) => (
+                      <div key={s.statut} className="flex justify-between"><span className="text-[#605F57]">{({ actif: 'Actif', hors_service: 'Hors service', maintenance: 'Maintenance' } as Record<string, string>)[s.statut] ?? s.statut}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{s.count}</span></div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Actifs par type</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.actifs.actifsParType.map((t: any) => (
+                      <div key={t.nom} className="flex justify-between"><span className="text-[#605F57]">{t.nom}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{t.count}</span></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <StatCard label="Propriétaires / actif (moy.)" value={data.actifs.moyenneProprietairesParActif} icon={Users} />
+                <StatCard label="Actifs sans incident déclaré" value={`${data.actifs.tauxActifsSansIncident}%`} icon={Server} color={M.sage500} />
+              </div>
+
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-3">Charge d'incidents par propriétaire d'actif</h3>
+                {data.actifs.chargeParProprietaire.length === 0 ? <p className="text-sm text-[#86847A]">Aucun incident lié à un actif possédé sur la période.</p> : (
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
+                    {data.actifs.chargeParProprietaire.map((p: any) => (
+                      <div key={p.proprietaire} className="flex justify-between text-sm"><span className="text-[#605F57] truncate">{p.proprietaire}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{p.incidents}</span></div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'utilisateurs' && (
+            <div className="space-y-6">
+              <div className="grid lg:grid-cols-2 gap-6">
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Utilisateurs par rôle</h3>
+                  <div className="space-y-2 text-sm">
+                    {data.utilisateurs.utilisateursParRole.map((r: any) => (
+                      <div key={r.role} className="flex justify-between"><span className="text-[#605F57] capitalize">{r.role === 'client' ? 'Utilisateur' : r.role}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{r.count}</span></div>
+                    ))}
+                    <div className="flex justify-between pt-2 border-t border-[#EFEFEC]"><span className="text-[#605F57]">Actifs / Inactifs</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.utilisateurs.utilisateursActifsInactifs.actifs} / {data.utilisateurs.utilisateursActifsInactifs.inactifs}</span></div>
+                    <div className="flex justify-between"><span className="text-[#605F57]">Sans connexion depuis 30j</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{data.utilisateurs.utilisateursInactifsDepuis30j}</span></div>
+                  </div>
+                </div>
+                <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                  <h3 className="text-sm font-semibold text-[#45443E] mb-3">Notifications par type</h3>
+                  <div className="space-y-2 text-sm max-h-64 overflow-y-auto">
+                    {data.utilisateurs.notificationsParType.map((n: any) => (
+                      <div key={n.type} className="flex justify-between"><span className="text-[#605F57]">{n.type}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{n.count}</span></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <StatCard label="Taux de lecture des notifications" value={data.utilisateurs.tauxLectureNotifications != null ? `${data.utilisateurs.tauxLectureNotifications}%` : '—'} icon={Bell} />
+                <StatCard label="Délai moyen avant lecture" value={data.utilisateurs.delaiMoyenLectureMinutes != null ? formatDuree(data.utilisateurs.delaiMoyenLectureMinutes) : '—'} icon={Clock} />
+              </div>
+
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-3">Volume de notifications par destinataire</h3>
+                {data.utilisateurs.notificationsParDestinataire.length === 0 ? <p className="text-sm text-[#86847A]">Aucune notification sur la période.</p> : (
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
+                    {data.utilisateurs.notificationsParDestinataire.map((n: any) => (
+                      <div key={n.destinataire} className="flex justify-between text-sm"><span className="text-[#605F57] truncate">{n.destinataire}</span><span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{n.count}</span></div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab === 'agents' && (
+            <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+              <h3 className="text-sm font-semibold text-[#45443E] mb-4">Performance par agent</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#E2E1DC]">
+                      <th className="text-left px-4 py-2 text-[10px] text-[#86847A] uppercase">Agent</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Prestations</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Résolus</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Charge actuelle</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Durée moy.</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Durée médiane</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Ratio global</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Rapports complétés</th>
+                      <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Note moy.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.byAgent.map((row: any) => (
+                      <tr key={row.agent.id} className="border-b border-[#EFEFEC]">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <Avatar user={row.agent} size="xs" />
+                            <span className="text-[#45443E]">{row.agent.prenom} {row.agent.nom}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.prestations}</td>
+                        <td className="px-4 py-3 text-right" style={{ fontFamily: "'IBM Plex Mono', monospace", color: row.resolus > 0 ? M.sage500 : M.n400 }}>{row.resolus}</td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.chargeActuelle}</td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.dureeMoyenneMinutes != null ? formatDuree(row.dureeMoyenneMinutes) : '—'}</td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.dureeMedianeMinutes != null ? formatDuree(row.dureeMedianeMinutes) : '—'}</td>
+                        <td className="px-4 py-3 text-right" style={{ fontFamily: "'IBM Plex Mono', monospace", color: row.ratioGlobal == null ? M.n400 : row.ratioGlobal <= 100 ? M.sage500 : row.ratioGlobal <= 150 ? M.amber500 : M.brick500 }}>{row.ratioGlobal != null ? `${row.ratioGlobal}%` : '—'}</td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.tauxCompletudeRapports != null ? `${row.tauxCompletudeRapports}%` : '—'}</td>
+                        <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.noteMoyenne != null ? `${row.noteMoyenne}/5` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {tab === 'equipes' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-4">Performance par manager</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[#E2E1DC]">
+                        <th className="text-left px-4 py-2 text-[10px] text-[#86847A] uppercase">Manager</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Incidents gérés</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Clôturés</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Durée moy.</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Durée médiane</th>
+                        <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Réévaluations</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.byManager.map((row: any) => (
+                        <tr key={row.manager.id} className="border-b border-[#EFEFEC]">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Avatar user={row.manager} size="xs" />
+                              <span className="text-[#45443E]">{row.manager.prenom} {row.manager.nom}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.incidents}</td>
+                          <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.clotures}</td>
+                          <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.dureeMoyenneMinutes != null ? formatDuree(row.dureeMoyenneMinutes) : '—'}</td>
+                          <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.dureeMedianeMinutes != null ? formatDuree(row.dureeMedianeMinutes) : '—'}</td>
+                          <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.nbReevaluations}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg border border-[#E2E1DC] p-5">
+                <h3 className="text-sm font-semibold text-[#45443E] mb-4">Performance par équipe</h3>
+                {data.byEquipe.length === 0 ? <p className="text-sm text-[#86847A]">Aucune équipe avec activité sur la période.</p> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[#E2E1DC]">
+                          <th className="text-left px-4 py-2 text-[10px] text-[#86847A] uppercase">Équipe</th>
+                          <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Effectif</th>
+                          <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Incidents traités</th>
+                          <th className="text-right px-4 py-2 text-[10px] text-[#86847A] uppercase">Prestations actives</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.byEquipe.map((row: any) => (
+                          <tr key={row.equipe.id} className="border-b border-[#EFEFEC]">
+                            <td className="px-4 py-3 text-[#45443E]">{row.equipe.nom}</td>
+                            <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.effectif}</td>
+                            <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.incidents}</td>
+                            <td className="px-4 py-3 text-right text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{row.prestationsActives}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

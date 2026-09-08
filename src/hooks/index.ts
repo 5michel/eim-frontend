@@ -290,7 +290,14 @@ export function useImpactsUrgences() {
   const { data: impacts, loading: li } = useFetch<any[]>('/impacts');
   const { data: urgences, loading: lu } = useFetch<any[]>('/urgences');
   const { data: priorites, loading: lp } = useFetch<any[]>('/priorites');
-  return { impacts: impacts ?? [], urgences: urgences ?? [], priorites: priorites ?? [], loading: li || lu || lp };
+  const { data: matrice, loading: lm } = useFetch<any[]>('/matrice-priorites');
+  return {
+    impacts: impacts ?? [],
+    urgences: urgences ?? [],
+    priorites: priorites ?? [],
+    matrice: matrice ?? [],
+    loading: li || lu || lp || lm,
+  };
 }
 
 // ── Reports ───────────────────────────────────────────────────────────────

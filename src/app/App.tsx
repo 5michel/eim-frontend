@@ -318,14 +318,20 @@ const EmptyState = ({ icon: Icon = FileText, title, description, action }: { ico
   </div>
 );
 
-const SLABar = ({ delaiReponse, delaiResolution, dateCreation, statut }: { delaiReponse: number | string | null; delaiResolution: number | string | null; dateCreation: string; statut?: string }) => {
+const SLABar = ({ delaiReponse, delaiResolution, echeanceReponse, echeanceResolution, statut }: { delaiReponse: number | string | null; delaiResolution: number | string | null; echeanceReponse?: string | null; echeanceResolution?: string | null; statut?: string }) => {
   // Tant que le ticket n'est pas pris en charge, l'échéance qui compte est le temps de réponse,
   // pas le temps de résolution (qui ne redevient pertinent qu'une fois la prise en charge faite).
   const enAttente = statut === 'ouvert';
   const total = Number(enAttente ? delaiReponse : delaiResolution);
-  if (!Number.isFinite(total) || total <= 0) return null;
-  const elapsed = (Date.now() - new Date(dateCreation).getTime()) / 60000;
-  const pct = Math.min(100, (elapsed / total) * 100);
+  const echeance = enAttente ? echeanceReponse : echeanceResolution;
+  if (!Number.isFinite(total) || total <= 0 || !echeance) return null;
+  // On se base sur l'échéance absolue renvoyée par l'API plutôt que sur un calcul local
+  // (date de création + durée) : l'échéance est recalculée côté serveur à chaque réévaluation
+  // du SLA (prise en charge, réévaluation, escalade), donc s'appuyer dessus fait automatiquement
+  // repartir la barre de progression à zéro dans ces cas au lieu de rester bloquée sur l'ancienne
+  // fenêtre calculée depuis la création de l'incident.
+  const remaining = (new Date(echeance).getTime() - Date.now()) / 60000;
+  const pct = Math.min(100, Math.max(0, ((total - remaining) / total) * 100));
   const color = pct >= 100 ? M.brick500 : pct >= 75 ? M.amber500 : M.sage500;
   return (
     <div className="flex items-center gap-2">
@@ -333,7 +339,7 @@ const SLABar = ({ delaiReponse, delaiResolution, dateCreation, statut }: { delai
         <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
       </div>
       <span className="text-xs font-mono text-[#86847A]" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
-        {enAttente ? 'Réponse : ' : ''}{fmtMin(Math.max(0, Math.round(total - elapsed)))}
+        {enAttente ? 'Réponse : ' : ''}{fmtMin(Math.max(0, Math.round(remaining)))}
       </span>
     </div>
   );
@@ -840,7 +846,7 @@ function IncidentRow({ incident }: { incident: any }) {
         <p className="text-sm text-[#1C1B18] truncate">{incident.resume ?? incident.description}</p>
         {incident.statut !== 'cloture' && (
           <div className="mt-2 max-w-xs">
-            <SLABar delaiReponse={incident.delai_reponse} delaiResolution={incident.delai_resolution} dateCreation={incident.date_creation} statut={incident.statut} />
+            <SLABar delaiReponse={incident.delai_reponse} delaiResolution={incident.delai_resolution} echeanceReponse={incident.echeance_reponse} echeanceResolution={incident.echeance_resolution} statut={incident.statut} />
           </div>
         )}
       </div>
@@ -1271,7 +1277,7 @@ function IncidentDetailPage() {
             {inc.statut !== 'cloture' && (
               <div className="mt-3 pt-3 border-t border-[#EFEFEC]">
                 <p className="text-[10px] text-[#86847A] mb-1">Progression SLA</p>
-                <SLABar delaiReponse={inc.delai_reponse} delaiResolution={inc.delai_resolution} dateCreation={inc.date_creation} statut={inc.statut} />
+                <SLABar delaiReponse={inc.delai_reponse} delaiResolution={inc.delai_resolution} echeanceReponse={inc.echeance_reponse} echeanceResolution={inc.echeance_resolution} statut={inc.statut} />
               </div>
             )}
           </InfoCard>
@@ -2918,6 +2924,15 @@ function RapportsPage() {
 
   useEffect(() => { generate({}); }, []);
 
+  // Nom de fichier commun aux deux exports : section pointée (cette page = "statistiques-eim",
+  // la période filtrée si renseignée) + horodatage de génération, pour distinguer plusieurs
+  // exports successifs et savoir à quel moment les données ont été extraites (MaP.md section 12).
+  const nomFichierExport = (extension: string) => {
+    const periode = (dateDebut || dateFin) ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}` : '';
+    const horodatage = new Date().toISOString().replace(/:/g, '-').replace(/\..+$/, '');
+    return `statistiques-eim${periode}_${horodatage}.${extension}`;
+  };
+
   const exportExcel = () => {
     if (!data) return;
     const wb = XLSX.utils.book_new();
@@ -2946,8 +2961,61 @@ function RapportsPage() {
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(agents), 'Performance agents');
 
-    const periode = (dateDebut || dateFin) ? `_${dateDebut || 'debut'}_${dateFin || 'fin'}` : '';
-    XLSX.writeFile(wb, `statistiques-eim${periode}.xlsx`);
+    XLSX.writeFile(wb, nomFichierExport('xlsx'));
+  };
+
+  // CSV = extraction de données brutes (une ligne par enregistrement, sans mise en forme),
+  // complémentaire de l'Excel ci-dessus qui reste réservé aux résumés/graphes (MaP.md section 12).
+  // Un bloc par table, séparés par une ligne vide, dans un seul fichier plat.
+  const exportCsv = () => {
+    if (!data) return;
+    const blocs: string[] = [];
+    const ajouterBloc = (titre: string, aoa: (string | number)[][]) => {
+      if (!aoa.length) return;
+      const csv = XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(aoa));
+      blocs.push(`${titre}\n${csv}`);
+    };
+
+    ajouterBloc('Résumé', [
+      ['Indicateur', 'Valeur'],
+      ['Total incidents', data.total],
+      ['Clôturés', data.cloturesCount],
+      ["Taux de résolution (%)", data.tauxResolution],
+      ...data.byStatut.map((s: any) => [`Statut : ${statutLabel(s.statut)}`, s.count]),
+    ]);
+    ajouterBloc('Par priorité', [['Priorité', 'Nombre'], ...data.byPriorite.map((p: any) => [p.nom, p.count])]);
+    if (data.byImpact?.length) ajouterBloc('Par impact', [['Impact', 'Nombre'], ...data.byImpact.map((r: any) => [r.nom, r.count])]);
+    if (data.byUrgence?.length) ajouterBloc('Par urgence', [['Urgence', 'Nombre'], ...data.byUrgence.map((r: any) => [r.nom, r.count])]);
+    if (data.byActif?.length) ajouterBloc('Par actif (top 10)', [['Actif', 'Nombre'], ...data.byActif.map((r: any) => [r.nom, r.count])]);
+    if (data.byMotClef?.length) ajouterBloc('Par mot-clé (top 10)', [['Mot-clé', 'Nombre'], ...data.byMotClef.map((r: any) => [r.nom, r.count])]);
+    ajouterBloc('Performance agents', [
+      ['Agent', 'Prestations', 'Résolus', 'Durée moy. (min)', 'Durée médiane (min)', 'Ratio global (%)', 'Note moy.', 'Charge actuelle'],
+      ...data.byAgent.map((row: any) => [
+        `${row.agent.prenom} ${row.agent.nom}`, row.prestations, row.resolus,
+        row.dureeMoyenneMinutes ?? '', row.dureeMedianeMinutes ?? '', row.ratioGlobal ?? '',
+        row.noteMoyenne ?? '', row.chargeActuelle ?? '',
+      ]),
+    ]);
+    if (data.byManager?.length) ajouterBloc('Performance managers', [
+      ['Manager', 'Incidents gérés', 'Clôturés', 'Durée moy. (min)', 'Durée médiane (min)', 'Réévaluations'],
+      ...data.byManager.map((row: any) => [
+        `${row.manager.prenom} ${row.manager.nom}`, row.incidents, row.clotures,
+        row.dureeMoyenneMinutes ?? '', row.dureeMedianeMinutes ?? '', row.nbReevaluations ?? '',
+      ]),
+    ]);
+    if (data.byEquipe?.length) ajouterBloc('Par équipe', [
+      ['Équipe', 'Effectif', 'Incidents traités', 'Prestations actives'],
+      ...data.byEquipe.map((r: any) => [r.equipe?.nom ?? '', r.effectif ?? '', r.incidents ?? '', r.prestationsActives ?? '']),
+    ]);
+
+    // BOM UTF-8 en tête : nécessaire pour qu'Excel/LibreOffice affichent correctement les accents.
+    const blob = new Blob(['﻿' + blocs.join('\n\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomFichierExport('csv');
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -2969,6 +3037,9 @@ function RapportsPage() {
           </button>
           <button onClick={exportExcel} disabled={!data} className="flex items-center gap-2 px-4 py-2 text-sm border border-[#E2E1DC] rounded hover:bg-[#F7F7F5] text-[#45443E] disabled:opacity-50">
             <FileSpreadsheet size={14} />Exporter en Excel
+          </button>
+          <button onClick={exportCsv} disabled={!data} className="flex items-center gap-2 px-4 py-2 text-sm border border-[#E2E1DC] rounded hover:bg-[#F7F7F5] text-[#45443E] disabled:opacity-50">
+            <FileText size={14} />Exporter en CSV
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --font-size: 14px;
+  --font-size: 22px;
   --background: #F7F7F5;
   --foreground: #1C1B18;
   --card: #FFFFFF;
@@ -204,5 +204,22 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+/* L'impression (bouton "Imprimer" des statistiques) ne doit reproduire que l'onglet actif,
+   pas le menu de navigation ni les contrôles qui n'ont pas leur place sur papier. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: #fff !important;
   }
 }

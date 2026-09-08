@@ -2,11 +2,11 @@
 // Exposes the same shape: api.get/post/put/delete return { data: responseBody }.
 // Interceptors: request adds Bearer token, response handles 401 auto-logout.
 
-//const BASE_URL =
-//  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) ||
-//  'http://localhost:8000/api/v1';
+import { clearSession, getToken as readToken } from './session';
 
-const BASE_URL = 'http://localhost:8080/api';
+const BASE_URL =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL) ||
+  '/api';
 
 interface RequestConfig {
   params?: Record<string, unknown>;
@@ -29,11 +29,12 @@ class ApiError extends Error {
 }
 
 function getToken(): string | null {
-  try { return localStorage.getItem('eim_token'); } catch { return null; }
+  return readToken();
 }
 
 function buildUrl(path: string, params?: Record<string, unknown>): string {
-  const url = new URL(`${BASE_URL}${path}`);
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  const url = new URL(`${BASE_URL}${normalized}`, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
@@ -50,15 +51,20 @@ async function request<T = any>(
 ): Promise<ApiResponse<T>> {
   const token = getToken();
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'Accept': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(config?.headers ?? {}),
   };
 
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const res = await fetch(buildUrl(path, config?.params), {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? (isFormData ? body as FormData : JSON.stringify(body)) : undefined,
     signal: config?.signal,
   });
 
@@ -66,8 +72,10 @@ async function request<T = any>(
   try { data = await res.json(); } catch { data = {}; }
 
   if (res.status === 401) {
-    try { localStorage.removeItem('eim_token'); localStorage.removeItem('eim_user'); } catch {}
-    if (typeof window !== 'undefined') window.location.href = '/login';
+    clearSession();
+    if (typeof window !== 'undefined' && !path.includes('/login') && !path.includes('/invitation')) {
+      window.location.href = '/login';
+    }
   }
 
   if (!res.ok) throw new ApiError(data, res.status);
@@ -82,6 +90,8 @@ const api = {
     request<T>('POST', path, body, config),
   put: <T = any>(path: string, body?: unknown, config?: RequestConfig) =>
     request<T>('PUT', path, body, config),
+  patch: <T = any>(path: string, body?: unknown, config?: RequestConfig) =>
+    request<T>('PATCH', path, body, config),
   delete: <T = any>(path: string, config?: RequestConfig) =>
     request<T>('DELETE', path, undefined, config),
 };
